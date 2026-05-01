@@ -7,64 +7,52 @@ import { StatusBar } from './status-bar';
 import { ProjectRail } from '@/components/project-rail/project-rail';
 import { ChatPane } from '@/components/chat/chat-pane';
 import { Inspector } from '@/components/inspector/inspector';
+import { Sidebar } from '@/components/sidebar/sidebar';
+import { CommandPalette } from '@/components/command-palette/command-palette';
+import { SettingsDrawer } from '@/components/settings/settings-drawer';
+import { HelpDialog } from '@/components/help/help-dialog';
+import { GlobalKeybindings } from '@/components/keybindings/global-keybindings';
 
 /**
- * AppShell — Asagi 全体のシェル。
+ * AppShell — Asagi 全体のシェル（AS-108 / AS-114 / AS-117 / AS-118 / AS-120 / AS-121）。
  *
  * 初回起動時（welcome.completed === false）は WelcomeWizard を表示し、
  * 完了後は 3 ペイン（左 Rail+Sidebar / 中央 Chat / 右 Inspector）の Main shell に切替える。
  *
- * 設計参照: design-brand-v1.md § 5.1 グローバル構造
+ * グローバル overlay（CommandPalette / SettingsDrawer / HelpDialog）と
+ * GlobalKeybindings は Welcome 完了前後に関わらず常時マウントする。
+ *
+ * 設計参照: design-brand-v1.md § 5.1 グローバル構造 / § 6.4 Command Palette
  */
 export function AppShell() {
   const completed = useWelcomeStore((s) => s.completed);
 
-  if (!completed) {
-    return (
-      <main className="flex min-h-screen flex-col bg-background text-foreground">
-        <TitleBar />
-        <div className="flex flex-1 items-center justify-center">
-          <WelcomeWizard />
-        </div>
-        <StatusBar />
-      </main>
-    );
-  }
-
   return (
-    <main className="flex h-screen flex-col bg-background text-foreground">
-      <TitleBar />
-      <div className="flex min-h-0 flex-1">
-        <ProjectRail />
-        <Sidebar />
-        <ChatPane />
-        <Inspector />
-      </div>
-      <StatusBar />
-    </main>
-  );
-}
-
-/**
- * 240px の Sidebar 雛形。SessionList / モデル切替は M1 後期 / M2 で本実装。
- * AS-108 では枠だけ提供して 3 ペイン構造を視認可能にする。
- */
-function Sidebar() {
-  return (
-    <aside
-      aria-label="サイドバー"
-      className="hidden w-60 shrink-0 flex-col border-r border-border bg-surface md:flex"
-    >
-      <div className="border-b border-border p-3">
-        <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          セッション
-        </h2>
-      </div>
-      <div className="flex-1 overflow-y-auto p-3 text-sm text-muted-foreground">
-        <p className="rounded-md border border-dashed border-border p-3 text-xs">
-          セッション一覧はここに表示されます（AS-129 で SQLite から hydration 予定）。
-        </p>
-      </div>
-    </aside>
+    <>
+      {!completed ? (
+        <main className="flex min-h-screen flex-col bg-background text-foreground">
+          <TitleBar />
+          <div className="flex flex-1 items-center justify-center">
+            <WelcomeWizard />
+          </div>
+          <StatusBar />
+        </main>
+      ) : (
+        <main className="flex h-screen flex-col bg-background text-foreground">
+          <TitleBar />
+          <div className="flex min-h-0 flex-1">
+            <ProjectRail />
+            <Sidebar />
+            <ChatPane />
+            <Inspector />
+          </div>
+          <StatusBar />
+        </main>
+      )}
+      <GlobalKeybindings />
+      <CommandPalette />
+      <SettingsDrawer />
+      <HelpDialog />
+    </>
   );
 }

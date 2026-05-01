@@ -3,6 +3,12 @@
 import { useTranslations } from 'next-intl';
 import { Languages, Layers, Sparkles, Database } from 'lucide-react';
 
+/**
+ * Welcome Step 1: ブランド紹介（AS-119）。
+ *
+ * - 浅葱の語源コンセプト + 4 つの特徴を表示。
+ * - design-brand-v1.md § 2 ブランドストーリーに準拠。
+ */
 export function StepBrand() {
   const t = useTranslations('welcome.brand');
 
@@ -30,6 +36,10 @@ export function StepBrand() {
 
       <p className="text-md leading-relaxed text-foreground/90">{t('body')}</p>
 
+      <div className="rounded-lg border border-border bg-surface-elevated/40 p-5">
+        <p className="text-xs leading-relaxed text-muted-foreground">{t('concept')}</p>
+      </div>
+
       <div className="rounded-lg border border-border bg-surface p-5">
         <h2 className="mb-3 text-sm font-medium text-muted-foreground">
           {t('highlightTitle')}
@@ -43,6 +53,8 @@ export function StepBrand() {
           ))}
         </ul>
       </div>
+
+      <p className="text-[11px] text-muted-foreground/80">{t('siblingNote')}</p>
     </section>
   );
 }

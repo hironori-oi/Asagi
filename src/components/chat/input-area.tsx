@@ -3,8 +3,11 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { Send, Brain, Gauge } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useProjectStore } from '@/lib/stores/project';
+import { useSessionStore } from '@/lib/stores/session';
+import { useUiStore } from '@/lib/stores/ui';
 import {
   useChatStore,
   CHAT_DEFAULT_MODEL,
@@ -13,32 +16,47 @@ import {
 } from '@/lib/stores/chat';
 import { invoke } from '@/lib/tauri/invoke';
 import { cn } from '@/lib/utils';
+import { SLASH_ITEMS, SlashPalette, type SlashPaletteItem } from './slash-palette';
 
 const FALLBACK_MODELS = ['gpt-5.5-codex', 'gpt-5-codex', 'o4-mini'];
 const EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high'];
 
 /**
- * 入力エリア — テキストエリア + 送信ボタン + モデル選択 + Reasoning effort。
+ * 入力エリア（AS-115 / AS-117 / AS-120）。
  *
- * 仕様（v0.1.0）:
- *   - 送信時は appendUser → appendAssistantStub のみ（Codex CLI 統合は POC 通過後）
- *   - モデル一覧は Tauri command `codex_get_models` から取得（モック値返却）。
- *     dev サーバ単体（Tauri 非接続）では FALLBACK_MODELS にフォールバック。
- *   - Reasoning effort は design-brand-v1.md § 8.3 に準拠した 3 段セグメント。
+ * - 送信時: appendUser → SQLite create_message (user) → setTimeout 200ms → appendAssistantStub → create_message (assistant)
+ *   Tauri 非接続環境では invoke エラーを toast 表示しつつ UI 上は進行させる。
+ * - draft が `/` で始まると SlashPalette を表示。Enter で実行。
  */
 export function InputArea() {
   const t = useTranslations('chat');
+  const tSlash = useTranslations('slash');
+  const tToast = useTranslations('toast');
+
   const activeId = useProjectStore((s) => s.activeProjectId);
   const draft = useChatStore((s) => s.inputDraftByProject[activeId] ?? '');
   const setDraft = useChatStore((s) => s.setInputDraft);
   const appendUser = useChatStore((s) => s.appendUser);
   const appendAssistantStub = useChatStore((s) => s.appendAssistantStub);
+  const clearChat = useChatStore((s) => s.clear);
   const model = useChatStore((s) => s.modelByProject[activeId] ?? CHAT_DEFAULT_MODEL);
   const effort = useChatStore((s) => s.effortByProject[activeId] ?? CHAT_DEFAULT_EFFORT);
   const setModel = useChatStore((s) => s.setModel);
   const setEffort = useChatStore((s) => s.setEffort);
 
+  const activeSessionId = useSessionStore((s) => s.activeSessionId);
+  const setHelpOpen = useUiStore((s) => s.setHelpOpen);
+
   const [models, setModels] = useState<string[]>(FALLBACK_MODELS);
+
+  // SlashPalette
+  const showSlash = draft.startsWith('/') && !draft.includes('\n');
+  const slashQuery = showSlash ? draft.slice(1).trim() : '';
+  const [slashIndex, setSlashIndex] = useState(0);
+
+  useEffect(() => {
+    setSlashIndex(0);
+  }, [slashQuery]);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,18 +72,85 @@ export function InputArea() {
     };
   }, []);
 
-  const send = () => {
+  /** SlashPalette からのコマンド実行。 */
+  const runSlash = (id: SlashPaletteItem['id']) => {
+    setDraft(activeId, '');
+    if (id === 'clear') {
+      clearChat(activeId);
+      toast.success(t('clearedToast'));
+      return;
+    }
+    if (id === 'help') {
+      setHelpOpen(true);
+      return;
+    }
+    // model / config は未実装。
+    toast.message(tSlash('notImplementedToast', { cmd: `/${id}` }));
+  };
+
+  const send = async () => {
     const value = draft.trim();
     if (!value) return;
+
     appendUser(activeId, value);
+
+    // SQLite に永続化（active session が無ければスキップ — fallback）
+    if (activeSessionId) {
+      try {
+        await invoke<string>('create_message', {
+          args: { sessionId: activeSessionId, role: 'user', content: value },
+        });
+      } catch {
+        toast.error(t('saveFailed'));
+      }
+    }
+
     // モック応答。POC 通過後に invoke('agent_send_message', ...) + listen('agent:{id}:assistant_message_delta')
-    setTimeout(() => appendAssistantStub(activeId), 200);
+    setTimeout(async () => {
+      const stub = '[stub] Codex 統合は POC 通過後に実装';
+      appendAssistantStub(activeId);
+      if (activeSessionId) {
+        try {
+          await invoke<string>('create_message', {
+            args: { sessionId: activeSessionId, role: 'assistant', content: stub },
+          });
+        } catch {
+          // 既に user 側で toast 出ているので再表示は省略。
+        }
+      }
+    }, 200);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlash) {
+      const filtered = SLASH_ITEMS.filter((it) => it.id.startsWith(slashQuery.toLowerCase()));
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashIndex((i) => (filtered.length === 0 ? 0 : (i + 1) % filtered.length));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashIndex((i) =>
+          filtered.length === 0 ? 0 : (i - 1 + filtered.length) % filtered.length
+        );
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+        e.preventDefault();
+        const target = filtered[slashIndex];
+        if (target) runSlash(target.id);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setDraft(activeId, '');
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      send();
+      void send();
     }
   };
 
@@ -76,26 +161,36 @@ export function InputArea() {
           <ModelSelect models={models} value={model} onChange={(v) => setModel(activeId, v)} t={t} />
           <EffortSelect value={effort} onChange={(v) => setEffort(activeId, v)} t={t} />
         </div>
-        <div className="flex items-end gap-2 rounded-lg border border-border bg-surface-elevated p-2 focus-within:ring-2 focus-within:ring-ring">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(activeId, e.target.value)}
-            onKeyDown={onKeyDown}
-            aria-label={t('placeholder')}
-            placeholder={t('placeholder')}
-            rows={2}
-            className="selectable min-h-[40px] flex-1 resize-none bg-transparent px-2 py-1 text-sm placeholder:text-muted-foreground focus-visible:outline-none"
-          />
-          <Button
-            type="button"
-            size="icon"
-            onClick={send}
-            disabled={draft.trim().length === 0}
-            aria-label={t('send')}
-            title={t('send')}
-          >
-            <Send strokeWidth={1.5} className="h-4 w-4" />
-          </Button>
+        <div className="relative">
+          {showSlash && (
+            <SlashPalette
+              query={slashQuery}
+              selectedIndex={slashIndex}
+              onHover={setSlashIndex}
+              onSelect={runSlash}
+            />
+          )}
+          <div className="flex items-end gap-2 rounded-lg border border-border bg-surface-elevated p-2 focus-within:ring-2 focus-within:ring-ring">
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(activeId, e.target.value)}
+              onKeyDown={onKeyDown}
+              aria-label={t('placeholder')}
+              placeholder={t('placeholder')}
+              rows={2}
+              className="selectable min-h-[40px] flex-1 resize-none bg-transparent px-2 py-1 text-sm placeholder:text-muted-foreground focus-visible:outline-none"
+            />
+            <Button
+              type="button"
+              size="icon"
+              onClick={() => void send()}
+              disabled={draft.trim().length === 0}
+              aria-label={t('send')}
+              title={t('send')}
+            >
+              <Send strokeWidth={1.5} className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
         <p className="text-[11px] text-muted-foreground">{t('stub')}</p>
       </div>

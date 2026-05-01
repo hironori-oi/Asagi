@@ -1,4 +1,5 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import type { MessageRow, SessionRow } from './types';
 
 /**
  * Tauri command の型付き invoke wrapper。
@@ -14,16 +15,19 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
  */
 export interface Commands {
   db_init: () => Promise<void>;
+  // sessions
   create_session: (args: { title: string; projectId: string }) => Promise<string>;
   list_sessions: (args: { projectId?: string }) => Promise<SessionRow[]>;
   get_session: (args: { id: string }) => Promise<SessionRow | null>;
   delete_session: (args: { id: string }) => Promise<void>;
+  // messages
+  create_message: (args: {
+    sessionId: string;
+    role: 'user' | 'assistant' | 'system' | 'tool';
+    content: string;
+  }) => Promise<string>;
+  list_messages: (args: { sessionId: string }) => Promise<MessageRow[]>;
+  count_messages: (args: { sessionId: string }) => Promise<number>;
 }
 
-export interface SessionRow {
-  id: string;
-  title: string;
-  project_id: string;
-  created_at: string;
-  updated_at: string;
-}
+export type { SessionRow, MessageRow };

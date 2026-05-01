@@ -4,6 +4,7 @@
 //! Codex 統合系コマンドは Phase 0 POC 通過まで「POC pending」エラーを返す。
 
 use crate::auth::{self, AuthStatus};
+use crate::message::{self, MessageRow};
 use crate::session::{self, SessionRow};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
@@ -77,6 +78,53 @@ pub fn delete_session(
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("database not initialized")?;
     session::delete(conn, &args.id).map_err(|e| format!("{e:#}"))
+}
+
+// --------------------------------------------------------------------
+// Message CRUD（AS-117）
+// --------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct CreateMessageArgs {
+    pub session_id: String,
+    pub role: String,
+    pub content: String,
+}
+
+#[tauri::command]
+pub fn create_message(
+    state: tauri::State<AppState>,
+    args: CreateMessageArgs,
+) -> Result<String, String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("database not initialized")?;
+    message::create(conn, &args.session_id, &args.role, &args.content)
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListMessagesArgs {
+    pub session_id: String,
+}
+
+#[tauri::command]
+pub fn list_messages(
+    state: tauri::State<AppState>,
+    args: ListMessagesArgs,
+) -> Result<Vec<MessageRow>, String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("database not initialized")?;
+    message::list(conn, &args.session_id).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn count_messages(
+    state: tauri::State<AppState>,
+    args: ListMessagesArgs,
+) -> Result<u32, String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("database not initialized")?;
+    message::count(conn, &args.session_id).map_err(|e| format!("{e:#}"))
 }
 
 // --------------------------------------------------------------------

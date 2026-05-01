@@ -12,33 +12,40 @@
     "brand": {
       "title": "Welcome to Asagi",
       "subtitle": "Bring your ChatGPT subscription into a calm Japanese-first interface.",
-      "body": "Asagi is a Japanese-first IDE that lets non-experts work with Codex. Switch between projects like Slack, paste images, and chat in your own language.",
+      "concept": "Asagi (\u6d45\u8471) — a traditional Japanese color from the Heian era. The light blue-green that emerges in the early stages of indigo dyeing symbolizes calmness, intellect, and unwavering resolve. Asagi is built so that even non-experts can work with Codex, in their own language, as a tool that moves between thought and dialogue.",
+      "body": "Switch between projects like Slack, paste images, and chat in your own language — all running locally.",
       "highlightTitle": "Four pillars of Asagi",
       "highlights": {
         "japanese": "Japanese UI first",
         "design": "Linear-grade calm design",
         "multiProject": "Slack-style multi-project switching",
         "local": "Local persistence with full-text search"
-      }
+      },
+      "siblingNote": "Sibling product Sumi (\u58a8) is dedicated to Claude Code, while Asagi is dedicated to Codex. Twins differing only in color."
     },
     "oauth": {
       "title": "Sign in with ChatGPT",
       "subtitle": "Use your subscription directly. No API key required.",
       "body": "Pressing the button opens ChatGPT's auth flow in your browser. Asagi automatically detects when you finish.",
-      "loginButton": "Start login (enabled after Phase 0 POC)",
-      "note": "Stub before Phase 0 POC clearance. The real implementation spawns `codex login` via the Tauri Shell plugin."
-    },
-    "permissions": {
-      "title": "Permissions & sample",
-      "subtitle": "What Asagi can access on your machine.",
-      "items": {
-        "codexProcess": "Spawn and talk to the Codex CLI process",
+      "loginButton": "Sign in with OAuth (real impl after POC)",
+      "note": "Stub before Phase 0 POC clearance. The real implementation spawns `codex login` via the Tauri Shell plugin.",
+      "permissionsTitle": "What Asagi can access",
+      "permissions": {
+        "codexProcess": "Spawn and talk to the Codex CLI process (OpenAI API access)",
         "localDb": "Persist chat history in ~/.asagi/history.db",
         "keyring": "Use the OS keyring for secure settings",
         "noTelemetry": "No telemetry. Chat logs never leave your device."
-      },
-      "sampleTitle": "Sample (enabled after Phase 0 POC)",
-      "sampleBody": "Type 'hello' to receive a stub response. Real integration arrives with AS-110."
+      }
+    },
+    "sample": {
+      "title": "Try a sample",
+      "subtitle": "Get a feel for Asagi before the real Codex integration ships.",
+      "body": "Type 'hello' below to receive a stub response. The real Codex integration is enabled after the POC clears.",
+      "placeholder": "Try: hello",
+      "send": "Send",
+      "you": "You",
+      "codex": "Codex",
+      "stubResponse": "[stub] The real Codex integration responds here once the POC clears."
     }
   },
   "shell": {
@@ -47,7 +54,9 @@
       "noProject": "No project selected",
       "minimize": "Minimize",
       "maximize": "Maximize",
-      "close": "Close"
+      "close": "Close",
+      "settings": "Settings",
+      "themeToggle": "Toggle theme"
     },
     "statusbar": {
       "ready": "Ready",
@@ -66,12 +75,20 @@
     "settings": "Settings",
     "switchTo": "Project: {name}"
   },
+  "sidebar": {
+    "title": "Sessions",
+    "newSession": "New session",
+    "empty": "No sessions yet. Press 'New session' to start.",
+    "loadFailed": "Failed to load sessions (DB unavailable)",
+    "messageCount": "{count} msg",
+    "untitled": "Untitled session"
+  },
   "chat": {
     "empty": {
       "title": "Talk to Codex in your language",
       "body": "Type a message below and press Send (Codex CLI integration is wired in after the POC clears)."
     },
-    "placeholder": "Type a message (Shift+Enter for newline)",
+    "placeholder": "Type a message (Shift+Enter for newline, / for commands)",
     "send": "Send",
     "model": "Model",
     "effort": {
@@ -80,7 +97,9 @@
       "medium": "medium",
       "high": "high"
     },
-    "stub": "[stub] Codex integration ships after the POC clears."
+    "stub": "[stub] Codex integration ships after the POC clears.",
+    "saveFailed": "Failed to save message",
+    "clearedToast": "Session cleared"
   },
   "inspector": {
     "title": "Inspector",
@@ -101,5 +120,92 @@
       "title": "Todos",
       "body": "TODOs extracted by Codex (M2 onward)."
     }
+  },
+  "command": {
+    "placeholder": "Search commands…",
+    "empty": "No matching commands",
+    "groups": {
+      "project": "Projects",
+      "session": "Sessions",
+      "settings": "Settings",
+      "navigation": "Navigation",
+      "help": "Help"
+    },
+    "items": {
+      "switchProject": "Switch project",
+      "newSession": "New session",
+      "clearChat": "Clear chat",
+      "selectModel": "Select model",
+      "toggleTheme": "Toggle theme",
+      "switchLocale": "Switch language",
+      "openSettings": "Open settings",
+      "showHelp": "Show keybindings"
+    },
+    "hints": {
+      "switchProject": "Jump to a project on the rail",
+      "newSession": "Create a new session in the current project",
+      "clearChat": "Delete messages in the current session",
+      "selectModel": "Change the Codex model",
+      "toggleTheme": "Switch dark / light",
+      "switchLocale": "Switch Japanese / English",
+      "openSettings": "Open the settings panel",
+      "showHelp": "Show the full list of keybindings"
+    }
+  },
+  "slash": {
+    "placeholder": "/ command",
+    "empty": "No matching slash commands",
+    "items": {
+      "clear": "Clear messages of the current session",
+      "model": "Select model (not implemented)",
+      "help": "Show keybinding list",
+      "config": "Open settings (not implemented)"
+    },
+    "notImplementedToast": "{cmd} is not implemented yet (after POC)"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Customize how Asagi looks and behaves.",
+    "sections": {
+      "appearance": "Appearance",
+      "language": "Language",
+      "shortcuts": "Shortcuts"
+    },
+    "theme": {
+      "label": "Theme",
+      "options": {
+        "light": "Light",
+        "dark": "Dark",
+        "system": "Follow system"
+      }
+    },
+    "locale": {
+      "label": "Language",
+      "options": {
+        "ja": "日本語",
+        "en": "English"
+      }
+    },
+    "close": "Close"
+  },
+  "help": {
+    "title": "Keybindings",
+    "subtitle": "Shortcuts available in Asagi",
+    "shortcuts": {
+      "commandPalette": "Open command palette",
+      "newSession": "New session",
+      "toggleTheme": "Toggle theme",
+      "showHelp": "Show this help",
+      "submit": "Send message (input)",
+      "newline": "Newline (input)",
+      "escape": "Close modal / popover"
+    }
+  },
+  "toast": {
+    "themeSwitched": "Theme switched to {theme}",
+    "localeSwitched": "Language switched to {locale}",
+    "newSessionCreated": "New session created",
+    "sessionLoadFailed": "Failed to load session",
+    "comingSoon": "Not implemented yet (after POC)"
   }
 }

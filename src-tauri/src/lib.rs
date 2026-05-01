@@ -13,6 +13,7 @@ pub mod commands;
 pub mod db;
 pub mod image_paste;
 pub mod jobobject;
+pub mod message;
 pub mod multi_sidecar;
 pub mod project;
 pub mod session;
@@ -71,6 +72,9 @@ pub fn run() {
             commands::list_sessions,
             commands::get_session,
             commands::delete_session,
+            commands::create_message,
+            commands::list_messages,
+            commands::count_messages,
             commands::auth_login_start,
             commands::auth_status,
             commands::agent_send_message,

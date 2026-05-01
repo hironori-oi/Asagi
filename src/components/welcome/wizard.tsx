@@ -7,9 +7,9 @@ import { Button } from '@/components/ui/button';
 import { useWelcomeStore } from '@/lib/stores/welcome';
 import { StepBrand } from './step-brand';
 import { StepOAuth } from './step-oauth';
-import { StepPermissions } from './step-permissions';
+import { StepSample } from './step-sample';
 
-const STEPS = [StepBrand, StepOAuth, StepPermissions];
+const STEPS = [StepBrand, StepOAuth, StepSample];
 
 export function WelcomeWizard() {
   const t = useTranslations('welcome');

@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import { GeistSans } from 'geist/font/sans';
 import { GeistMono } from 'geist/font/mono';
 import { ThemeProvider } from 'next-themes';
-import { NextIntlClientProvider } from 'next-intl';
-import jaMessages from '@/lib/i18n/ja.json';
+import { Toaster } from 'sonner';
+import { ClientIntlProvider } from '@/components/providers/intl-provider';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -23,16 +23,31 @@ export default function RootLayout({
       className={`${GeistSans.variable} ${GeistMono.variable}`}
     >
       <body className="h-full bg-background text-foreground antialiased">
-        <NextIntlClientProvider locale="ja" messages={jaMessages} timeZone="Asia/Tokyo">
+        <ClientIntlProvider>
           <ThemeProvider
             attribute="data-theme"
             defaultTheme="dark"
-            enableSystem={false}
+            enableSystem
             disableTransitionOnChange
+            themes={['light', 'dark', 'system']}
           >
             {children}
+            <Toaster
+              position="bottom-right"
+              theme="dark"
+              richColors
+              closeButton
+              toastOptions={{
+                classNames: {
+                  toast: 'bg-surface border border-border text-foreground',
+                  description: 'text-muted-foreground',
+                  actionButton: 'bg-accent text-accent-foreground',
+                  cancelButton: 'bg-surface-elevated text-foreground',
+                },
+              }}
+            />
           </ThemeProvider>
-        </NextIntlClientProvider>
+        </ClientIntlProvider>
       </body>
     </html>
   );

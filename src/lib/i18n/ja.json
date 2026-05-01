@@ -12,33 +12,40 @@
     "brand": {
       "title": "Asagi へようこそ",
       "subtitle": "ChatGPT のサブスクをそのまま、日本語の落ち着いた画面で。",
-      "body": "Asagi（浅葱）は、Codex を素人でも触れる日本語ファーストの IDE です。複数のプロジェクトを Slack のように切り替えながら、画像も貼り付けられる対話型コーディングを目指します。",
+      "concept": "Asagi（浅葱）— 平安より続く伝統色。藍染の薄い段階に現れる青緑は、清涼と知性、そして揺るがぬ意志の象徴です。Codex を素人でも触れる、日本語ファーストの IDE として、思考と対話のあいだを行き来する道具を目指しました。",
+      "body": "複数のプロジェクトを Slack のように瞬時に切り替えながら、画像も貼り付けられる対話型コーディングを、ローカル完結で。",
       "highlightTitle": "Asagi の 4 つの特徴",
       "highlights": {
         "japanese": "日本語 UI ファースト",
         "design": "Linear 級の落ち着いたデザイン",
         "multiProject": "Slack 風の Multi-Project 切替",
         "local": "ローカル永続化と全文検索"
-      }
+      },
+      "siblingNote": "兄弟プロダクト Sumi（墨）は Claude Code 専用、Asagi は Codex 専用。色違いの双子です。"
     },
     "oauth": {
       "title": "ChatGPT でログイン",
       "subtitle": "サブスクの権限をそのまま使います。API Key の入力は不要です。",
       "body": "「ログインを開始」を押すと、ブラウザで ChatGPT の認証画面が開きます。承認後、Asagi が自動的に検知して次の画面へ進みます。",
-      "loginButton": "ログインを開始（POC 通過後に有効化）",
-      "note": "※ Phase 0 POC 通過前のスタブです。本実装では Codex CLI の `codex login` を Tauri Shell プラグインで起動します。"
-    },
-    "permissions": {
-      "title": "権限の確認とサンプル",
-      "subtitle": "Asagi がアクセスする領域を簡単に説明します。",
-      "items": {
+      "loginButton": "OAuth でログイン（実装は POC 後）",
+      "note": "Phase 0 POC 通過前のスタブです。本実装では Codex CLI の `codex login` を Tauri Shell プラグインで起動します。",
+      "permissionsTitle": "Asagi がアクセスする領域",
+      "permissions": {
         "codexProcess": "Codex CLI プロセスの起動・通信（OpenAI API 接続）",
         "localDb": "ローカル DB（~/.asagi/history.db）への会話保存",
         "keyring": "OS キーリングを使った設定の安全保管",
         "noTelemetry": "テレメトリ送信なし。会話ログは外部送信しません。"
-      },
-      "sampleTitle": "サンプル（POC 通過後に有効化）",
-      "sampleBody": "「こんにちは」と送るとデモ応答が返ります。実機統合は AS-110 以降。"
+      }
+    },
+    "sample": {
+      "title": "サンプル体験",
+      "subtitle": "実機統合の前に、Asagi のチャット体験を試してみてください。",
+      "body": "下の入力欄に「こんにちは」と送信すると、スタブ応答が返ります。実 Codex 統合は POC 通過後に有効化されます。",
+      "placeholder": "例: こんにちは",
+      "send": "送信",
+      "you": "あなた",
+      "codex": "Codex",
+      "stubResponse": "[stub] 実 Codex 統合は POC 通過後にここで応答します。"
     }
   },
   "shell": {
@@ -47,7 +54,9 @@
       "noProject": "プロジェクト未選択",
       "minimize": "最小化",
       "maximize": "最大化",
-      "close": "閉じる"
+      "close": "閉じる",
+      "settings": "設定",
+      "themeToggle": "テーマ切替"
     },
     "statusbar": {
       "ready": "準備完了",
@@ -66,12 +75,20 @@
     "settings": "設定",
     "switchTo": "プロジェクト: {name}"
   },
+  "sidebar": {
+    "title": "セッション",
+    "newSession": "新規セッション",
+    "empty": "セッションがありません。「新規セッション」を押して開始してください。",
+    "loadFailed": "セッション一覧の取得に失敗しました（DB 未接続）",
+    "messageCount": "{count} 件",
+    "untitled": "無題のセッション"
+  },
   "chat": {
     "empty": {
       "title": "Codex と日本語で対話",
       "body": "下の入力欄にメッセージを書いて送信してください（POC 通過後に Codex CLI と接続）。"
     },
-    "placeholder": "メッセージを入力（Shift+Enter で改行）",
+    "placeholder": "メッセージを入力（Shift+Enter で改行、/ でコマンド）",
     "send": "送信",
     "model": "モデル",
     "effort": {
@@ -80,7 +97,9 @@
       "medium": "medium",
       "high": "high"
     },
-    "stub": "[stub] Codex 統合は POC 通過後に実装"
+    "stub": "[stub] Codex 統合は POC 通過後に実装",
+    "saveFailed": "メッセージ保存に失敗しました",
+    "clearedToast": "セッションをクリアしました"
   },
   "inspector": {
     "title": "Inspector",
@@ -101,5 +120,92 @@
       "title": "Todos",
       "body": "Codex が抽出した TODO 一覧（M2 以降）。"
     }
+  },
+  "command": {
+    "placeholder": "コマンドまたは検索…",
+    "empty": "該当するコマンドがありません",
+    "groups": {
+      "project": "プロジェクト",
+      "session": "セッション",
+      "settings": "設定",
+      "navigation": "ナビゲーション",
+      "help": "ヘルプ"
+    },
+    "items": {
+      "switchProject": "プロジェクト切替",
+      "newSession": "新規セッション",
+      "clearChat": "チャットをクリア",
+      "selectModel": "モデルを選択",
+      "toggleTheme": "テーマを切替",
+      "switchLocale": "言語を切替",
+      "openSettings": "設定を開く",
+      "showHelp": "キーバインドを表示"
+    },
+    "hints": {
+      "switchProject": "ProjectRail の任意プロジェクトに移動",
+      "newSession": "現在のプロジェクトに新しいセッションを作成",
+      "clearChat": "現在のセッションのメッセージを削除",
+      "selectModel": "Codex のモデルを変更",
+      "toggleTheme": "ダーク / ライトを切替",
+      "switchLocale": "日本語 / 英語を切替",
+      "openSettings": "設定パネルを開く",
+      "showHelp": "全キーバインドを一覧表示"
+    }
+  },
+  "slash": {
+    "placeholder": "/ コマンド",
+    "empty": "該当するスラッシュコマンドがありません",
+    "items": {
+      "clear": "現在のセッションのメッセージを削除",
+      "model": "モデルを選択（未実装）",
+      "help": "キーバインド一覧を表示",
+      "config": "設定を開く（未実装）"
+    },
+    "notImplementedToast": "{cmd} は未実装です（POC 通過後に有効化）"
+  },
+  "settings": {
+    "title": "設定",
+    "subtitle": "Asagi の表示と挙動をカスタマイズします。",
+    "sections": {
+      "appearance": "外観",
+      "language": "言語",
+      "shortcuts": "ショートカット"
+    },
+    "theme": {
+      "label": "テーマ",
+      "options": {
+        "light": "ライト",
+        "dark": "ダーク",
+        "system": "システム設定に従う"
+      }
+    },
+    "locale": {
+      "label": "言語",
+      "options": {
+        "ja": "日本語",
+        "en": "English"
+      }
+    },
+    "close": "閉じる"
+  },
+  "help": {
+    "title": "キーバインド",
+    "subtitle": "Asagi で使えるショートカット一覧",
+    "shortcuts": {
+      "commandPalette": "コマンドパレットを開く",
+      "newSession": "新規セッション",
+      "toggleTheme": "テーマを切替",
+      "showHelp": "このヘルプを表示",
+      "submit": "メッセージ送信（入力欄）",
+      "newline": "改行（入力欄）",
+      "escape": "モーダル / ポップオーバを閉じる"
+    }
+  },
+  "toast": {
+    "themeSwitched": "テーマを {theme} に切替えました",
+    "localeSwitched": "言語を {locale} に切替えました",
+    "newSessionCreated": "新しいセッションを作成しました",
+    "sessionLoadFailed": "セッション読込に失敗しました",
+    "comingSoon": "未実装の機能です（POC 通過後）"
   }
 }
