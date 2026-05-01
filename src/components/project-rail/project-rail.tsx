@@ -1,47 +1,35 @@
 'use client';
 
-import { Plus } from 'lucide-react';
 import { useProjectStore } from '@/lib/stores/project';
-import { cn } from '@/lib/utils';
+import { ProjectIcon } from './project-icon';
+import { AddProjectButton } from './add-project-button';
 
 /**
- * Slack 風 ProjectRail（48px 縦アイコン列）。
- * v0.1.0 では default project 1 件のみ表示。
- * M2 AS-201 で `+` ボタンによる任意ディレクトリ追加を実装。
+ * Slack 風 ProjectRail — 48px 幅の縦アイコン列。
+ *
+ * v0.1.0:
+ *   - localStorage `asagi-project-registry` に persist された RegisteredProject[] を表示
+ *   - 起動時はダミー 3 件（`stores/project.ts` 参照）
+ *   - active 切替は瞬時（state 更新のみ、Codex sidecar swap は M2）
+ *
+ * 設計参照:
+ *   - design-brand-v1.md § 5.1 (48px 幅)
+ *   - design-brand-v1.md § 6.3 (motion-fast 150ms cross-fade)
+ *   - dev-v0.1.0-scaffold-design.md § 1.5 Multi-Sidecar Architecture
  */
 export function ProjectRail() {
-  const { projects, activeProjectId, setActive } = useProjectStore();
+  const projects = useProjectStore((s) => s.projects);
 
   return (
     <nav
       aria-label="プロジェクト切替"
-      className="flex h-full w-12 flex-col items-center gap-2 border-r border-border bg-surface py-3"
+      className="flex h-full w-12 shrink-0 flex-col items-center gap-1.5 border-r border-border bg-surface py-3"
     >
       {projects.map((p) => (
-        <button
-          key={p.id}
-          type="button"
-          onClick={() => setActive(p.id)}
-          aria-label={`プロジェクト: ${p.name}`}
-          aria-current={p.id === activeProjectId}
-          className={cn(
-            'flex h-9 w-9 items-center justify-center rounded-md text-sm font-medium transition-colors duration-fast ease-out-expo',
-            p.id === activeProjectId
-              ? 'bg-accent text-accent-foreground ring-2 ring-accent/40'
-              : 'bg-surface-elevated text-muted-foreground hover:bg-surface-elevated/80'
-          )}
-        >
-          {p.name.charAt(0).toUpperCase()}
-        </button>
+        <ProjectIcon key={p.id} project={p} />
       ))}
-      <button
-        type="button"
-        aria-label="プロジェクトを追加（M2 で実装）"
-        disabled
-        className="mt-1 flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground opacity-40"
-      >
-        <Plus strokeWidth={1.5} className="h-4 w-4" />
-      </button>
+      <div className="my-1 h-px w-6 bg-border" aria-hidden />
+      <AddProjectButton />
     </nav>
   );
 }

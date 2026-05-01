@@ -43,11 +43,63 @@
   },
   "shell": {
     "titlebar": {
-      "appName": "Asagi"
+      "appName": "Asagi",
+      "noProject": "プロジェクト未選択",
+      "minimize": "最小化",
+      "maximize": "最大化",
+      "close": "閉じる"
     },
     "statusbar": {
       "ready": "準備完了",
-      "stub": "v0.1.0 雛形"
+      "stub": "v0.1.0 雛形",
+      "model": "モデル",
+      "context": "コンテキスト",
+      "branch": "ブランチ",
+      "branchUnknown": "未取得",
+      "quota": "Codex プラン",
+      "quotaPlan": "{plan}: 残 {remaining}%"
+    }
+  },
+  "rail": {
+    "addProject": "プロジェクトを追加",
+    "addDisabled": "プロジェクト追加（AS-112 で本実装）",
+    "settings": "設定",
+    "switchTo": "プロジェクト: {name}"
+  },
+  "chat": {
+    "empty": {
+      "title": "Codex と日本語で対話",
+      "body": "下の入力欄にメッセージを書いて送信してください（POC 通過後に Codex CLI と接続）。"
+    },
+    "placeholder": "メッセージを入力（Shift+Enter で改行）",
+    "send": "送信",
+    "model": "モデル",
+    "effort": {
+      "label": "推論の深さ",
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
+    },
+    "stub": "[stub] Codex 統合は POC 通過後に実装"
+  },
+  "inspector": {
+    "title": "Inspector",
+    "tabs": {
+      "context": "コンテキスト",
+      "subAgents": "SubAgents",
+      "todos": "Todos"
+    },
+    "context": {
+      "title": "プロジェクトコンテキスト",
+      "body": "CLAUDE.md / AGENTS.md / CODEX.md などのコンテキストファイル一覧（M3 AS-301 で本実装）。"
+    },
+    "subAgents": {
+      "title": "サブエージェント",
+      "body": "Codex のサブエージェント呼出履歴（M2 AS-220 以降）。"
+    },
+    "todos": {
+      "title": "Todos",
+      "body": "Codex が抽出した TODO 一覧（M2 以降）。"
     }
   }
 }

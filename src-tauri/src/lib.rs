@@ -75,6 +75,10 @@ pub fn run() {
             commands::auth_status,
             commands::agent_send_message,
             commands::agent_cancel,
+            commands::codex_login,
+            commands::codex_send_message,
+            commands::codex_get_models,
+            commands::codex_get_quota,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Asagi application");

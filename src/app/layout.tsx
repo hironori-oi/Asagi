@@ -22,7 +22,7 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${GeistSans.variable} ${GeistMono.variable}`}
     >
-      <body>
+      <body className="h-full bg-background text-foreground antialiased">
         <NextIntlClientProvider locale="ja" messages={jaMessages} timeZone="Asia/Tokyo">
           <ThemeProvider
             attribute="data-theme"
