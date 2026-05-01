@@ -28,11 +28,16 @@ tauri-plugin-store = "2.1"
 tauri-plugin-clipboard-manager = "2.0"
 
 # Async / runtime
-tokio = { version = "1.41", features = ["rt-multi-thread", "macros", "sync", "time", "process", "fs", "io-util"] }
+tokio = { version = "1.41", features = ["rt-multi-thread", "macros", "sync", "time", "process", "fs", "io-util", "io-std"] }
+async-trait = "0.1"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Hashing (mock app-server image paste hash 用)
+sha2 = "0.10"
+base64 = "0.22"
 
 # SQLite (bundled で同梱、FTS5 有効)
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
@@ -63,7 +68,20 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Windows-only (JobObject for child process kill cascade)
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["Win32_System_JobObjects", "Win32_Foundation"] }
+windows = { version = "0.58", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_System_Threading", "Win32_Security"] }
+
+# --------------------------------------------------------------------
+# Binaries
+# AS-132: mock-codex-app-server を単体起動可能にする
+# `cargo run --bin mock-codex-app-server` で stdio JSON-RPC 2.0 mock を起動
+# --------------------------------------------------------------------
+[[bin]]
+name = "asagi"
+path = "src/main.rs"
+
+[[bin]]
+name = "mock-codex-app-server"
+path = "src/bin/mock_codex_app_server.rs"
 
 [features]
 # デフォルトで Tauri custom protocol 有効

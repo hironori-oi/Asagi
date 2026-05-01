@@ -1,10 +1,11 @@
 //! Asagi (PRJ-018) — Tauri 2 Rust main process library.
 //!
 //! 本クレートは Tauri アプリの初期化、状態管理、コマンド登録を行う。
-//! Codex sidecar 統合系のモジュール（codex_sidecar / multi_sidecar / auth /
-//! image_paste / jobobject）は Phase 0 POC 通過後に本実装する（DEC-018-014）。
+//! Codex sidecar 統合系モジュールは AS-130〜AS-135 で mock-first 実装済。
+//! Real impl は Phase 0 POC (DEC-018-010) 通過後に `codex_sidecar/real.rs` を
+//! 埋めることで切替可能（環境変数 `ASAGI_SIDECAR_MODE=real`）。
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 pub mod auth;
@@ -12,25 +13,27 @@ pub mod codex_sidecar;
 pub mod commands;
 pub mod db;
 pub mod image_paste;
-pub mod jobobject;
 pub mod message;
-pub mod multi_sidecar;
+pub mod process;
 pub mod project;
 pub mod session;
 pub mod settings;
+
+use crate::codex_sidecar::multi::MultiSidecarManager;
 
 /// アプリ全体で共有する状態。
 /// SQLite コネクションと Multi-Sidecar マップを保持する。
 pub struct AppState {
     pub db: Mutex<Option<rusqlite::Connection>>,
-    // Multi-Sidecar は POC 通過後に有効化
-    // pub sidecars: Mutex<multi_sidecar::MultiSidecar>,
+    /// Multi-Sidecar Manager (AS-134)。mock / real を sidecar_mode で切替。
+    pub multi: Arc<MultiSidecarManager>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
             db: Mutex::new(None),
+            multi: Arc::new(MultiSidecarManager::new()),
         }
     }
 }
@@ -96,6 +99,12 @@ pub fn run() {
             commands::get_setting,
             commands::set_setting,
             commands::list_settings,
+            // AS-134 Multi-Sidecar commands
+            commands::codex::agent_spawn_sidecar,
+            commands::codex::agent_send_message_v2,
+            commands::codex::agent_shutdown_sidecar,
+            commands::codex::agent_list_sidecars,
+            commands::codex::agent_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Asagi application");

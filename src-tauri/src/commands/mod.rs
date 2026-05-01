@@ -14,6 +14,11 @@ use std::collections::HashMap;
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_store::StoreExt;
 
+// AS-134: Codex sidecar 系コマンドは別 module に集約
+// `tauri::generate_handler!` macro は `pub use` 経由の re-export を
+// 解決できないため、lib.rs では `commands::codex::xxx` で参照する。
+pub mod codex;
+
 /// SQLite 初期化を再実行する（debug 用）。
 #[tauri::command]
 pub fn db_init(state: tauri::State<AppState>) -> Result<(), String> {
@@ -165,14 +170,61 @@ pub struct AgentSendMessageArgs {
     pub images: Vec<String>,
 }
 
+/// 旧 agent_send_message。互換のため残置（M1 既存呼出側）。
+/// 新規実装は `agent_send_message_v2`（commands/codex.rs）。
+/// mock mode では mock sidecar を即時 spawn → chat → 文字列返却まで一括で行う。
 #[tauri::command]
-pub fn agent_send_message(_args: AgentSendMessageArgs) -> Result<(), PocPendingError> {
-    Err(POC_PENDING)
+pub async fn agent_send_message(
+    state: tauri::State<'_, AppState>,
+    args: AgentSendMessageArgs,
+) -> Result<String, String> {
+    use crate::codex_sidecar::mock::make_chat_request;
+    use crate::codex_sidecar::protocol::ChatResult;
+    use crate::codex_sidecar::SidecarMode;
+
+    let mode = SidecarMode::from_env();
+    state
+        .multi
+        .spawn_for(args.project_id.clone(), mode)
+        .await
+        .map_err(|e| format!("spawn_for failed: {e:#}"))?;
+
+    let req_id = format!("req-{}", uuid::Uuid::new_v4());
+    let session_id = format!("sess-{}", args.project_id);
+    let req = make_chat_request(&req_id, &session_id, &args.text);
+
+    let resp = state
+        .multi
+        .send_request(&args.project_id, req)
+        .await
+        .map_err(|e| format!("send_request failed: {e:#}"))?;
+    if let Some(err) = resp.error {
+        return Err(format!("codex error: {} ({})", err.message, err.code));
+    }
+    let result_value = resp.result.ok_or_else(|| "empty result".to_string())?;
+    let result: ChatResult =
+        serde_json::from_value(result_value).map_err(|e| format!("decode result: {e}"))?;
+    Ok(result.full_text)
 }
 
 #[tauri::command]
-pub fn agent_cancel(_project_id: String) -> Result<(), PocPendingError> {
-    Err(POC_PENDING)
+pub async fn agent_cancel(
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+) -> Result<(), String> {
+    use crate::codex_sidecar::protocol::method;
+    use crate::codex_sidecar::CodexRequest;
+    let req_id = format!("req-{}", uuid::Uuid::new_v4());
+    let req = CodexRequest::new(req_id, method::CANCEL, None);
+    let resp = state
+        .multi
+        .send_request(&project_id, req)
+        .await
+        .map_err(|e| format!("cancel failed: {e:#}"))?;
+    if let Some(err) = resp.error {
+        return Err(format!("codex error: {} ({})", err.message, err.code));
+    }
+    Ok(())
 }
 
 // --------------------------------------------------------------------
