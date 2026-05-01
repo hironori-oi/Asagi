@@ -191,6 +191,7 @@
   "help": {
     "title": "Keybindings",
     "subtitle": "Shortcuts available in Asagi",
+    "close": "Close",
     "shortcuts": {
       "commandPalette": "Open command palette",
       "newSession": "New session",

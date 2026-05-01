@@ -191,6 +191,7 @@
   "help": {
     "title": "キーバインド",
     "subtitle": "Asagi で使えるショートカット一覧",
+    "close": "閉じる",
     "shortcuts": {
       "commandPalette": "コマンドパレットを開く",
       "newSession": "新規セッション",

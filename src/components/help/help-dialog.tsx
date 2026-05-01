@@ -77,8 +77,8 @@ export function HelpDialog() {
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                aria-label="Close"
-                className="flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-fast ease-out-expo hover:bg-surface hover:text-foreground"
+                aria-label={t('close')}
+                className="flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-fast ease-out-expo hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <X strokeWidth={1.5} className="h-4 w-4" />
               </button>

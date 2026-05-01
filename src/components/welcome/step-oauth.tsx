@@ -3,6 +3,7 @@
 import { useTranslations } from 'next-intl';
 import { LogIn, Cpu, Database, KeyRound, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { logger } from '@/lib/logger';
 
 /**
  * Welcome Step 2: OAuth ログイン誘導 + パーミッション説明（AS-119）。
@@ -25,8 +26,7 @@ export function StepOAuth() {
     //   await invoke('auth_login_start');
     //   await on(AuthEvents.statusChanged, () => next());
     // 現状はスタブログ。
-    // eslint-disable-next-line no-console
-    console.log('[stub] codex login');
+    logger.info('[stub] codex login');
   };
 
   return (

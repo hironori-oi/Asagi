@@ -25,7 +25,10 @@ export function MessageList() {
 
   if (messages.length === 0) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+      <div
+        role="status"
+        className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center"
+      >
         <h2 className="text-lg font-medium text-foreground/90">{t('title')}</h2>
         <p className="max-w-md text-sm text-muted-foreground">{t('body')}</p>
       </div>
@@ -33,7 +36,12 @@ export function MessageList() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-4">
+    <div
+      role="log"
+      aria-live="polite"
+      aria-relevant="additions"
+      className="flex-1 overflow-y-auto px-4 py-4"
+    >
       <div className="mx-auto flex max-w-3xl flex-col gap-3">
         {messages.map((m) => (
           <MessageItem key={m.id} message={m} />

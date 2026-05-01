@@ -17,6 +17,7 @@ pub mod message;
 pub mod multi_sidecar;
 pub mod project;
 pub mod session;
+pub mod settings;
 
 /// アプリ全体で共有する状態。
 /// SQLite コネクションと Multi-Sidecar マップを保持する。
@@ -37,11 +38,20 @@ impl Default for AppState {
 /// Tauri アプリのエントリーポイント。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // tracing format を整える (AS-META-07):
+    //   - 時刻 + level + target + message
+    //   - ANSI 着色は terminal でのみ有効
+    //   - file への rotation は M2 で `tracing-appender` を追加して対応
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "asagi=info,warn".into()),
         )
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_level(true)
+        .with_ansi(true)
+        .compact()
         .init();
 
     tauri::Builder::default()
@@ -83,6 +93,9 @@ pub fn run() {
             commands::codex_send_message,
             commands::codex_get_models,
             commands::codex_get_quota,
+            commands::get_setting,
+            commands::set_setting,
+            commands::list_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Asagi application");

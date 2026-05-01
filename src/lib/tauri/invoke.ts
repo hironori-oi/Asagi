@@ -28,6 +28,10 @@ export interface Commands {
   }) => Promise<string>;
   list_messages: (args: { sessionId: string }) => Promise<MessageRow[]>;
   count_messages: (args: { sessionId: string }) => Promise<number>;
+  // settings (AS-META-06)
+  get_setting: (args: { key: string }) => Promise<unknown>;
+  set_setting: (args: { args: { key: string; value: unknown } }) => Promise<void>;
+  list_settings: () => Promise<Record<string, unknown>>;
 }
 
 export type { SessionRow, MessageRow };

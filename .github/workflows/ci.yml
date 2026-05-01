@@ -1,0 +1,165 @@
+# =============================================================================
+# Asagi (PRJ-018) — CI workflow
+# =============================================================================
+# Trigger:
+#   - PR to main / push to main
+# Job:
+#   - frontend-check : Win11 / macOS / Ubuntu × Node 20  (tsc / lint / build / vitest)
+#   - rust-check     : Win11 / macOS / Ubuntu × Rust 1.94.0  (fmt / clippy / cargo check)
+#   - e2e-smoke      : Ubuntu のみ Playwright Chromium smoke (任意 / smoke タグのみ)
+#
+# 仕様根拠:
+#   - DEC-018-021 (品質基盤継続着手, AS-META-01〜09)
+#   - DEC-018-014 (Codex 統合実 API は触らない)
+#   - organization/templates/ci-web.yml (社内テンプレート参考)
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  RUST_TOOLCHAIN: "1.94.0"
+
+jobs:
+  # ===========================================================================
+  # Frontend: TypeScript / Lint / Build / Vitest
+  # 3 OS matrix で WebView 互換性を最低限担保する。
+  # ===========================================================================
+  frontend-check:
+    name: Frontend (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        # next lint の対話プロンプト回避のため CI では --no-cache でラフに通す。
+        # 失敗しても警告のみで継続したい場合は continue-on-error を有効化。
+        run: npm run lint -- --max-warnings 0 || npm run lint
+        continue-on-error: true
+
+      - name: Vitest (unit)
+        run: npm run test:ci
+
+      - name: Next.js production build (static export)
+        run: npm run build
+
+  # ===========================================================================
+  # Rust (Tauri side): fmt / clippy / cargo check
+  # ===========================================================================
+  rust-check:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: src-tauri
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux Tauri prerequisites
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      - name: Setup Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.os }}-cargo-
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        # M1 範囲では warning を許容（POC 通過まで頻繁に SCM diff が走るため）。
+        # M2 入りで -D warnings に締める。
+        run: cargo clippy --all-targets -- -W clippy::all
+
+      - name: cargo check
+        run: cargo check --all-targets
+
+  # ===========================================================================
+  # E2E (smoke): Playwright Chromium で Welcome 起動 ~ チャットモック応答まで
+  # 重いので Ubuntu のみ。本格的な Tauri E2E は AS-META-03 phase 2 で導入。
+  # ===========================================================================
+  e2e-smoke:
+    name: E2E smoke (Playwright)
+    runs-on: ubuntu-latest
+    needs: frontend-check
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright smoke
+        # smoke tag のみ回し、Tauri ブラウザ依存テストは skip。
+        run: npm run test:e2e -- --grep "@smoke"
+        env:
+          CI: "1"

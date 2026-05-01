@@ -6,8 +6,13 @@
 use crate::auth::{self, AuthStatus};
 use crate::message::{self, MessageRow};
 use crate::session::{self, SessionRow};
+use crate::settings::{SettingKey, STORE_FILE};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+use tauri::{AppHandle, Runtime};
+use tauri_plugin_store::StoreExt;
 
 /// SQLite 初期化を再実行する（debug 用）。
 #[tauri::command]
@@ -234,4 +239,49 @@ pub fn codex_get_quota() -> Result<CodexQuota, String> {
         limit: 500,
         plan: "Pro 5x".to_string(),
     })
+}
+
+// --------------------------------------------------------------------
+// Settings 永続化 (AS-META-06) — tauri-plugin-store wrapper
+//
+// 設計:
+//   - JSON ファイルストア。`~/.asagi/settings.json` 相当 (Tauri の app data dir 配下)
+//   - キーは `SettingKey` enum で集約
+//   - 値は serde_json::Value で何でも入る
+//   - 既知キー以外も書き込めるが、`list_settings` では既知キーのみ返す
+// --------------------------------------------------------------------
+
+/// 1 設定値を取得。未設定の場合は `null` を返す (Option<JsonValue> を JSON null に)。
+#[tauri::command]
+pub fn get_setting<R: Runtime>(app: AppHandle<R>, key: String) -> Result<JsonValue, String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    Ok(store.get(&key).unwrap_or(JsonValue::Null))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetSettingArgs {
+    pub key: String,
+    pub value: JsonValue,
+}
+
+/// 1 設定値を保存。即時 disk flush までは plugin の auto save 任せ。
+#[tauri::command]
+pub fn set_setting<R: Runtime>(app: AppHandle<R>, args: SetSettingArgs) -> Result<(), String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(&args.key, args.value);
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 既知キー全件を取得。未設定キーは `null` で返す。
+#[tauri::command]
+pub fn list_settings<R: Runtime>(app: AppHandle<R>) -> Result<HashMap<String, JsonValue>, String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    let mut out: HashMap<String, JsonValue> = HashMap::new();
+    for key in SettingKey::all() {
+        let k = key.as_str().to_string();
+        let v = store.get(&k).unwrap_or(JsonValue::Null);
+        out.insert(k, v);
+    }
+    Ok(out)
 }

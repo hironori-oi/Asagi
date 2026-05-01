@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Asagi Favicon (browser tabs / small UI)
+  =======================================
+  16-32px の極小サイズで識別性を保つため:
+  - halo / 飛沫 / 中心 pool / ハイライトを省略
+  - 滴のシルエットだけを強く出す
+  - 背景は丸角の深紺 (transparent でも識別可)
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 64 64"
+     width="64" height="64"
+     role="img"
+     aria-label="Asagi">
+  <title>Asagi</title>
+
+  <defs>
+    <radialGradient id="favDropGrad" cx="50%" cy="42%" r="55%">
+      <stop offset="0%"   stop-color="#9DD4DC"/>
+      <stop offset="40%"  stop-color="#6BB8C8"/>
+      <stop offset="100%" stop-color="#2A6878"/>
+    </radialGradient>
+  </defs>
+
+  <!-- 丸角の深紺背景 -->
+  <rect x="0" y="0" width="64" height="64" rx="12" ry="12" fill="#0a0e14"/>
+
+  <!-- 滴 (favicon 用に拡大、よりはっきり) -->
+  <path d="
+    M 32 12
+    C 32 12, 38 18, 41 24
+    C 44 30, 46 36, 46 40
+    C 46 47, 40 51, 32 51
+    C 24 51, 18 47, 18 40
+    C 18 36, 20 30, 23 24
+    C 26 18, 32 12, 32 12
+    Z"
+    fill="url(#favDropGrad)"/>
+</svg>

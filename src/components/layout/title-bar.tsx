@@ -111,6 +111,7 @@ function WindowControl({ label, icon: Icon, variant = 'default' }: WindowControl
       title={label}
       className={cn(
         'flex h-6 w-7 items-center justify-center rounded-sm transition-colors duration-fast ease-out-expo',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         variant === 'destructive'
           ? 'hover:bg-destructive hover:text-destructive-foreground'
           : 'hover:bg-surface-elevated'
