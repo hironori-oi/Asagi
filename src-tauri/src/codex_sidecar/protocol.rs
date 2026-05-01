@@ -1,21 +1,39 @@
-//! JSON-RPC 2.0 メッセージ型 (AS-131)。
+//! JSON-RPC 2.0 メッセージ型 (AS-131 / DEC-018-023)。
 //!
 //! Codex `app-server` (DEC-018-009) との line-delimited JSON-RPC 2.0 通信に
-//! 用いる serde 型定義。Phase 0 POC で確定した実 schema は Real impl 側で
-//! ハードコードする方針だが、ここでは「Asagi が想定する最小集合」を
-//! 安定 IF として固定する。
+//! 用いる serde 型定義。
 //!
-//! メソッド最小集合:
-//!   - `codex/login`        : サブスク OAuth 起動
-//!   - `codex/chat`         : 1 ターン送信（streaming notification 付き）
-//!   - `codex/cancel`       : 進行中 turn の中断
-//!   - `codex/status`       : sidecar 自体の生存 / モデル / プラン情報
-//!   - `codex/imagePaste`   : base64 画像受領 → ハッシュ返却（POC#4 雛形）
+//! **DEC-018-023 適用**: Real Codex app-server (LSP-style protocol) に完全準拠した
+//! method 名 / event 名 / 高レベル型を定義する。mock 実装は内部応答のみ
+//! 決定論的スタブとし、API surface は Real と同一に保つ（リサーチ v2 § 4 P-1〜P-2）。
 //!
-//! Notification:
-//!   - `codex/event/assistant_message_delta` : ストリーミングトークン
-//!   - `codex/event/done`                    : ターン完了
-//!   - `codex/event/error`                   : 進行中エラー
+//! # 必須ハンドシェイク (LSP-style)
+//!
+//!   1. Client → Server: `initialize` request
+//!      params: `{ clientInfo: { name, title, version },
+//!                 capabilities: { experimentalApi, optOutNotificationMethods } }`
+//!   2. Server → Client: result `{ userAgent, codexHome, platformFamily, platformOs }`
+//!   3. Client → Server: `initialized` notification (id 無し)
+//!   4. これ以降に thread/start, turn/start, account/read 等を呼び出し可能
+//!
+//! # method 最小集合 (Asagi v0.1.0 〜 v1.0.0)
+//!
+//!   - Handshake : `initialize`, `initialized`
+//!   - Account   : `account/read`, `account/login/start`, `account/login/cancel`,
+//!                 `account/logout`, `account/rateLimits/read`
+//!   - Thread    : `thread/start`, `thread/resume`, `thread/list`, `thread/read`
+//!   - Turn      : `turn/start`, `turn/steer`, `turn/interrupt`
+//!   - Model     : `model/list`
+//!
+//! # Notification 最小集合
+//!
+//!   - thread/started, thread/status/changed
+//!   - turn/started, turn/completed
+//!   - item/started, item/completed
+//!   - item/agentMessage/delta              (assistant streaming の正解)
+//!   - item/reasoning/textDelta             (thinking token streaming)
+//!   - item/commandExecution/requestApproval, item/fileChange/requestApproval
+//!   - account/updated, account/rateLimits/updated
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -28,7 +46,7 @@ pub type RequestId = String;
 pub const JSONRPC_VERSION: &str = "2.0";
 
 // ---------------------------------------------------------------
-// Request / Response
+// Request / Response / Notification 基本型
 // ---------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,10 +111,6 @@ pub struct CodexError {
     pub data: Option<JsonValue>,
 }
 
-// ---------------------------------------------------------------
-// Notification (server -> client, no id)
-// ---------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexNotification {
     pub jsonrpc: String,
@@ -116,81 +130,225 @@ impl CodexNotification {
 }
 
 // ---------------------------------------------------------------
-// Method 定数
+// Method 定数 (Real Codex app-server 準拠 / DEC-018-023 / リサーチ v2 § 4 P-1)
 // ---------------------------------------------------------------
 
 pub mod method {
-    pub const LOGIN: &str = "codex/login";
-    pub const CHAT: &str = "codex/chat";
-    pub const CANCEL: &str = "codex/cancel";
-    pub const STATUS: &str = "codex/status";
-    pub const IMAGE_PASTE: &str = "codex/imagePaste";
+    // Handshake (LSP-style)
+    pub const INITIALIZE: &str = "initialize";
+    /// notification (id 無しで送信)
+    pub const INITIALIZED: &str = "initialized";
+
+    // Account / Auth
+    pub const ACCOUNT_READ: &str = "account/read";
+    pub const ACCOUNT_LOGIN_START: &str = "account/login/start";
+    pub const ACCOUNT_LOGIN_CANCEL: &str = "account/login/cancel";
+    pub const ACCOUNT_LOGOUT: &str = "account/logout";
+    pub const ACCOUNT_RATE_LIMITS_READ: &str = "account/rateLimits/read";
+
+    // Thread
+    pub const THREAD_START: &str = "thread/start";
+    pub const THREAD_RESUME: &str = "thread/resume";
+    pub const THREAD_LIST: &str = "thread/list";
+    pub const THREAD_READ: &str = "thread/read";
+
+    // Turn
+    pub const TURN_START: &str = "turn/start";
+    pub const TURN_STEER: &str = "turn/steer";
+    pub const TURN_INTERRUPT: &str = "turn/interrupt";
+
+    // Model
+    pub const MODEL_LIST: &str = "model/list";
 }
+
+// ---------------------------------------------------------------
+// Notification 定数 (Real 準拠 / DEC-018-023 / リサーチ v2 § 4 P-1)
+// ---------------------------------------------------------------
 
 pub mod event {
-    pub const ASSISTANT_MESSAGE_DELTA: &str = "codex/event/assistant_message_delta";
-    pub const DONE: &str = "codex/event/done";
-    pub const ERROR: &str = "codex/event/error";
+    // Thread lifecycle
+    pub const THREAD_STARTED: &str = "thread/started";
+    pub const THREAD_STATUS_CHANGED: &str = "thread/status/changed";
+
+    // Turn lifecycle
+    pub const TURN_STARTED: &str = "turn/started";
+    pub const TURN_COMPLETED: &str = "turn/completed";
+
+    // Item streaming
+    pub const ITEM_STARTED: &str = "item/started";
+    pub const ITEM_COMPLETED: &str = "item/completed";
+    pub const ITEM_AGENT_MESSAGE_DELTA: &str = "item/agentMessage/delta";
+    pub const ITEM_REASONING_TEXT_DELTA: &str = "item/reasoning/textDelta";
+
+    // Approvals
+    pub const ITEM_COMMAND_EXEC_REQUEST_APPROVAL: &str =
+        "item/commandExecution/requestApproval";
+    pub const ITEM_FILE_CHANGE_REQUEST_APPROVAL: &str =
+        "item/fileChange/requestApproval";
+
+    // Account
+    pub const ACCOUNT_UPDATED: &str = "account/updated";
+    pub const ACCOUNT_RATE_LIMITS_UPDATED: &str = "account/rateLimits/updated";
 }
 
 // ---------------------------------------------------------------
-// 高レベル params / result 型（mock / TS 共有のため）
+// 高レベル param / result 型 (DEC-018-023 / リサーチ v2 § 4 P-2)
 // ---------------------------------------------------------------
 
+// --- Initialize handshake ---
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatParams {
-    pub session_id: String,
-    pub content: String,
+pub struct InitializeParams {
+    #[serde(rename = "clientInfo")]
+    pub client_info: ClientInfo,
+    pub capabilities: ClientCapabilities,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientInfo {
+    pub name: String,
+    pub title: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClientCapabilities {
+    #[serde(rename = "experimentalApi", default)]
+    pub experimental_api: bool,
+    #[serde(rename = "optOutNotificationMethods", default)]
+    pub opt_out_notification_methods: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InitializeResult {
+    #[serde(rename = "userAgent")]
+    pub user_agent: String,
+    #[serde(rename = "codexHome")]
+    pub codex_home: String,
+    #[serde(rename = "platformFamily")]
+    pub platform_family: String,
+    #[serde(rename = "platformOs")]
+    pub platform_os: String,
+}
+
+// --- Thread ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadStartParams {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(rename = "approvalPolicy", skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<JsonValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadStartResult {
+    pub thread: ThreadInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadInfo {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
     #[serde(default)]
-    pub images: Vec<String>,
+    pub ephemeral: bool,
+    #[serde(rename = "modelProvider", default)]
+    pub model_provider: String,
+    #[serde(rename = "createdAt", default)]
+    pub created_at: String,
+}
+
+// --- Turn ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum InputItem {
+    Text { text: String },
+    Image { url: String },
+    LocalImage { path: String },
+    Skill { name: String, path: String },
+    Mention { name: String, path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatResult {
-    pub message_id: String,
-    pub full_text: String,
+pub struct TurnStartParams {
+    /// Real schema 準拠: thread/start で取得した id を必須で渡す。
+    #[serde(rename = "threadId")]
+    pub thread_id: String,
+    pub input: Vec<InputItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AssistantMessageDeltaParams {
-    pub session_id: String,
-    pub message_id: String,
+pub struct TurnStartResult {
+    pub turn: TurnInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnInfo {
+    pub id: String,
+    /// "inProgress" | "completed" | "interrupted"
+    pub status: String,
+    #[serde(default)]
+    pub items: Vec<JsonValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<JsonValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnInterruptParams {
+    #[serde(rename = "threadId")]
+    pub thread_id: String,
+    #[serde(rename = "turnId", default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+}
+
+// --- Notifications: streaming ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemAgentMessageDeltaParams {
+    #[serde(rename = "itemId")]
+    pub item_id: String,
     pub delta: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DoneParams {
-    pub session_id: String,
-    pub message_id: String,
+pub struct TurnCompletedParams {
+    pub turn: TurnInfo,
+}
+
+// --- Account ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AccountReadParams {
+    #[serde(rename = "refreshToken", default, skip_serializing_if = "Option::is_none")]
+    pub refresh_token: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StatusResult {
-    pub alive: bool,
-    pub model: String,
-    pub plan: String,
+pub struct AccountReadResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<AccountInfo>,
+    #[serde(rename = "requiresOpenaiAuth", default)]
+    pub requires_openai_auth: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoginResult {
-    pub ok: bool,
-    pub user: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImagePasteParams {
-    pub base64: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImagePasteResult {
-    pub sha256: String,
-    pub bytes: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CancelParams {
-    pub session_id: String,
+pub struct AccountInfo {
+    /// "apikey" | "chatgpt" | "chatgptAuthTokens"
+    #[serde(rename = "type")]
+    pub account_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(rename = "planType", default, skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
 }
 
 // ---------------------------------------------------------------
@@ -206,19 +364,19 @@ mod tests {
     fn roundtrip_request() {
         let req = CodexRequest::new(
             "req-1",
-            method::CHAT,
-            Some(json!({"session_id": "s1", "content": "hi"})),
+            method::TURN_START,
+            Some(json!({"threadId": "t1", "input": [{"type": "text", "text": "hi"}]})),
         );
         let s = serde_json::to_string(&req).unwrap();
         let back: CodexRequest = serde_json::from_str(&s).unwrap();
-        assert_eq!(back.method, "codex/chat");
+        assert_eq!(back.method, "turn/start");
         assert_eq!(back.id, "req-1");
         assert_eq!(back.jsonrpc, "2.0");
     }
 
     #[test]
     fn roundtrip_response_ok() {
-        let resp = CodexResponse::ok("req-1", json!({"alive": true}));
+        let resp = CodexResponse::ok("req-1", json!({"thread": {"id": "t1"}}));
         let s = serde_json::to_string(&resp).unwrap();
         let back: CodexResponse = serde_json::from_str(&s).unwrap();
         assert!(back.result.is_some());
@@ -237,11 +395,44 @@ mod tests {
     #[test]
     fn roundtrip_notification() {
         let n = CodexNotification::new(
-            event::ASSISTANT_MESSAGE_DELTA,
-            Some(json!({"session_id": "s1", "message_id": "m1", "delta": "tok"})),
+            event::ITEM_AGENT_MESSAGE_DELTA,
+            Some(json!({"itemId": "i1", "delta": "tok"})),
         );
         let s = serde_json::to_string(&n).unwrap();
         let back: CodexNotification = serde_json::from_str(&s).unwrap();
-        assert_eq!(back.method, event::ASSISTANT_MESSAGE_DELTA);
+        assert_eq!(back.method, event::ITEM_AGENT_MESSAGE_DELTA);
+    }
+
+    #[test]
+    fn input_item_text_serializes_with_type_tag() {
+        let it = InputItem::Text { text: "hello".into() };
+        let v = serde_json::to_value(it).unwrap();
+        assert_eq!(v["type"], "text");
+        assert_eq!(v["text"], "hello");
+    }
+
+    #[test]
+    fn input_item_local_image_serializes_camel_case() {
+        let it = InputItem::LocalImage { path: "C:/img.png".into() };
+        let v = serde_json::to_value(it).unwrap();
+        assert_eq!(v["type"], "localImage");
+        assert_eq!(v["path"], "C:/img.png");
+    }
+
+    #[test]
+    fn initialize_params_roundtrip() {
+        let p = InitializeParams {
+            client_info: ClientInfo {
+                name: "asagi".into(),
+                title: "Asagi".into(),
+                version: "0.0.1".into(),
+            },
+            capabilities: ClientCapabilities::default(),
+        };
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["clientInfo"]["name"], "asagi");
+        assert_eq!(v["capabilities"]["experimentalApi"], false);
+        let back: InitializeParams = serde_json::from_value(v).unwrap();
+        assert_eq!(back.client_info.title, "Asagi");
     }
 }

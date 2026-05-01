@@ -1,16 +1,64 @@
 //! Real Codex sidecar 実装 (AS-130)。
 //!
 //! **本ファイルは Phase 0 POC（DEC-018-010）通過後に本実装する。**
-//! POC 通過時点で確定している以下の挙動を実装する:
 //!
-//! 1. `tokio::process::Command::new("codex").arg("app-server").arg("--listen").arg("stdio")` で spawn
-//! 2. stdin/stdout を line-delimited JSON-RPC 2.0 として読み書き
-//! 3. id-correlation table (`HashMap<RequestId, oneshot::Sender<CodexResponse>>`) で
-//!    `send_request` の future を解決
-//! 4. id 無し message は notification として `broadcast::Sender` に流す
-//! 5. プロセスを `process::jobobject::WinJobObject` に AssignProcessToJob して
-//!    親 (Asagi) 終了時に確実に kill されるようにする
-//! 6. `shutdown()` で `codex/cancel` 全 session 送信 → SIGTERM → 1.5s wait → kill
+//! # 起動コマンド (DEC-018-009)
+//!
+//! ```text
+//! tokio::process::Command::new("codex")
+//!     .arg("app-server")
+//!     .arg("--listen")
+//!     .arg("stdio")
+//! ```
+//!
+//! # 必須ハンドシェイク (LSP-style, リサーチ v2 § 3.2 で確定)
+//!
+//! 1. spawn 後の最初のリクエストは必ず `initialize`
+//!    params: `{ clientInfo: { name, title, version },
+//!               capabilities: { experimentalApi: false, optOutNotificationMethods: [...] } }`
+//! 2. 受領した `InitializeResult` を保存（userAgent / codexHome / platformOs）
+//! 3. `initialized` notification を送信（id 無し）
+//! 4. これ以降に `thread/start`, `turn/start`, `account/read` 等を呼び出し可能
+//!
+//! 未 initialize の状態で他 method を呼ぶと Real CLI から `"Not initialized"`
+//! エラーが返る。重複 initialize は `"Already initialized"`。
+//!
+//! # 推奨 opt-out (Phase 1)
+//!
+//! Phase 1 では実装負荷削減のため、以下の notification を opt out:
+//!   - `item/reasoning/textDelta`
+//!   - `item/reasoning/summaryTextDelta`
+//!   - `item/commandExecution/outputDelta`
+//!   - `item/fileChange/outputDelta`
+//!   - `fuzzyFileSearch/sessionUpdated`
+//!   - `serverRequest/resolved`
+//!
+//! # codex-app-server バイナリ単体配布の検討 (DEC-018-024)
+//!
+//! 0.128.0 から `codex-app-server` 単体のリリース成果物が公開された。
+//! `codex` 本体（〜200MB）ではなく `codex-app-server`（〜80MB 想定）のみを
+//! Tauri リソースに同梱する選択肢が生まれた。M1 末に決裁予定。
+//!
+//! # 実装すべき項目
+//!
+//! 1. `start()`:
+//!    - `tokio::process::Command::new("codex").arg("app-server").arg("--listen").arg("stdio")` で spawn
+//!    - stdout reader task (line-delimited JSON parse → id 振分 + notification broadcast)
+//!    - stderr reader task (tracing::warn に転送)
+//!    - `crate::process::jobobject::WinJobObject::create()` + `assign_pid(child.id())`
+//!    - `initialize` request → result 保存 → `initialized` notification 送信
+//!
+//! 2. `send_request()`:
+//!    - `RequestId` (UUID) 生成
+//!    - `pending: Arc<Mutex<HashMap<RequestId, oneshot::Sender<CodexResponse>>>>` に登録
+//!    - stdin に line-delimited JSON 書き込み + flush
+//!    - `oneshot::Receiver` を await（タイムアウト付き、デフォルト 60s）
+//!
+//! 3. `shutdown()`:
+//!    - 全 active turn に `turn/interrupt` 送信（並列）
+//!    - stdin close
+//!    - `child.kill()` を 1.5s 後に保険発動
+//!    - `WinJobObject` Drop で確実に子の子まで kill
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -27,6 +75,7 @@ pub struct RealCodexSidecar {
     //   stdin: Option<tokio::process::ChildStdin>,
     //   pending: Arc<Mutex<HashMap<RequestId, oneshot::Sender<CodexResponse>>>>,
     //   reader_task: Option<JoinHandle<()>>,
+    //   initialize_result: Option<InitializeResult>,
     //   job: Option<crate::process::jobobject::WinJobObject>,
 }
 
@@ -47,11 +96,11 @@ impl RealCodexSidecar {
 #[async_trait]
 impl CodexSidecar for RealCodexSidecar {
     async fn start(&mut self) -> Result<()> {
-        // TODO(POC通過後): codex app-server を spawn し reader task を起動。
-        // POC で確定する事項:
-        //   - コマンド名 / 引数 (`codex app-server --listen stdio` 想定)
-        //   - 起動 readiness signal の有無 (例: 起動完了 notification)
-        //   - WinJobObject 紐付けタイミング (CreateProcess 直後 / spawn 後どちら)
+        // TODO(POC通過後):
+        //   1. codex app-server を spawn
+        //   2. reader task を起動 (notification は broadcast へ)
+        //   3. initialize request 送信 → InitializeResult 保存
+        //   4. initialized notification 送信
         Err(anyhow!(
             "RealCodexSidecar::start is not yet implemented (Phase 0 POC pending: DEC-018-010 / AS-115/AS-118/AS-121)"
         ))
@@ -69,7 +118,7 @@ impl CodexSidecar for RealCodexSidecar {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
-        // TODO(POC通過後): cancel 全 session → wait → kill (WinJobObject Drop でも確実)
+        // TODO(POC通過後): turn/interrupt 全 turn → wait → kill (WinJobObject Drop でも確実)
         Err(anyhow!(
             "RealCodexSidecar::shutdown is not yet implemented (Phase 0 POC pending)"
         ))

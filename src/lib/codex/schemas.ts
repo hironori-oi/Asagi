@@ -1,7 +1,10 @@
 /**
- * JSON-RPC 2.0 メッセージ型 (AS-131 / AS-135 TS 側)。
+ * JSON-RPC 2.0 メッセージ型 (AS-131 / AS-135 / DEC-018-023)。
  *
  * Rust 側 `src-tauri/src/codex_sidecar/protocol.rs` と 1:1 対応する。
+ *
+ * **DEC-018-023 適用**: Real Codex app-server (LSP-style) の API surface に
+ * 完全準拠した method 名 / event 名 / 高レベル型を定義する。
  *
  * **zod 未インストール方針**: deps 増加を避けるため、手書きの interface +
  * 型ガード関数で代替。後で zod に置換する場合は `validateXxx` 関数を
@@ -9,22 +12,50 @@
  */
 
 // ---------------------------------------------------------------
-// Method 定数 (Rust の codex_sidecar::protocol::method と一致)
+// Method 定数 (Real Codex app-server 準拠)
 // ---------------------------------------------------------------
 
 export const CodexMethod = {
-  LOGIN: 'codex/login',
-  CHAT: 'codex/chat',
-  CANCEL: 'codex/cancel',
-  STATUS: 'codex/status',
-  IMAGE_PASTE: 'codex/imagePaste',
+  // Handshake
+  INITIALIZE: 'initialize',
+  INITIALIZED: 'initialized',
+  // Account
+  ACCOUNT_READ: 'account/read',
+  ACCOUNT_LOGIN_START: 'account/login/start',
+  ACCOUNT_LOGIN_CANCEL: 'account/login/cancel',
+  ACCOUNT_LOGOUT: 'account/logout',
+  ACCOUNT_RATE_LIMITS_READ: 'account/rateLimits/read',
+  // Thread
+  THREAD_START: 'thread/start',
+  THREAD_RESUME: 'thread/resume',
+  THREAD_LIST: 'thread/list',
+  THREAD_READ: 'thread/read',
+  // Turn
+  TURN_START: 'turn/start',
+  TURN_STEER: 'turn/steer',
+  TURN_INTERRUPT: 'turn/interrupt',
+  // Model
+  MODEL_LIST: 'model/list',
 } as const;
 
 export const CodexEvent = {
-  ASSISTANT_MESSAGE_DELTA: 'codex/event/assistant_message_delta',
-  DONE: 'codex/event/done',
-  ERROR: 'codex/event/error',
-  READY: 'codex/event/ready',
+  // Thread lifecycle
+  THREAD_STARTED: 'thread/started',
+  THREAD_STATUS_CHANGED: 'thread/status/changed',
+  // Turn lifecycle
+  TURN_STARTED: 'turn/started',
+  TURN_COMPLETED: 'turn/completed',
+  // Item streaming
+  ITEM_STARTED: 'item/started',
+  ITEM_COMPLETED: 'item/completed',
+  ITEM_AGENT_MESSAGE_DELTA: 'item/agentMessage/delta',
+  ITEM_REASONING_TEXT_DELTA: 'item/reasoning/textDelta',
+  // Approvals
+  ITEM_COMMAND_EXEC_REQUEST_APPROVAL: 'item/commandExecution/requestApproval',
+  ITEM_FILE_CHANGE_REQUEST_APPROVAL: 'item/fileChange/requestApproval',
+  // Account
+  ACCOUNT_UPDATED: 'account/updated',
+  ACCOUNT_RATE_LIMITS_UPDATED: 'account/rateLimits/updated',
 } as const;
 
 // ---------------------------------------------------------------
@@ -58,45 +89,109 @@ export interface CodexNotification {
 }
 
 // ---------------------------------------------------------------
-// 高レベル param / result 型
+// Initialize handshake
 // ---------------------------------------------------------------
 
-export interface ChatParams {
-  session_id: string;
-  content: string;
-  images?: string[];
+export interface ClientInfo {
+  name: string;
+  title: string;
+  version: string;
 }
 
-export interface ChatResult {
-  message_id: string;
-  full_text: string;
+export interface ClientCapabilities {
+  experimentalApi?: boolean;
+  optOutNotificationMethods?: string[];
 }
 
-export interface AssistantMessageDeltaParams {
-  session_id: string;
-  message_id: string;
+export interface InitializeParams {
+  clientInfo: ClientInfo;
+  capabilities: ClientCapabilities;
+}
+
+export interface InitializeResult {
+  userAgent: string;
+  codexHome: string;
+  platformFamily: string;
+  platformOs: string;
+}
+
+// ---------------------------------------------------------------
+// Thread / Turn
+// ---------------------------------------------------------------
+
+export interface ThreadStartParams {
+  model: string;
+  cwd?: string;
+  approvalPolicy?: string;
+  sandbox?: unknown;
+}
+
+export interface ThreadInfo {
+  id: string;
+  preview?: string;
+  ephemeral: boolean;
+  modelProvider?: string;
+  createdAt?: string;
+}
+
+export interface ThreadStartResult {
+  thread: ThreadInfo;
+}
+
+/** Real schema 準拠の InputItem (turn/start.input の各要素)。 */
+export type InputItem =
+  | { type: 'text'; text: string }
+  | { type: 'image'; url: string }
+  | { type: 'localImage'; path: string }
+  | { type: 'skill'; name: string; path: string }
+  | { type: 'mention'; name: string; path: string };
+
+export interface TurnStartParams {
+  threadId: string;
+  input: InputItem[];
+  model?: string;
+  effort?: string;
+}
+
+export interface TurnInfo {
+  id: string;
+  /** "inProgress" | "completed" | "interrupted" */
+  status: string;
+  items: unknown[];
+  error?: unknown;
+}
+
+export interface TurnStartResult {
+  turn: TurnInfo;
+}
+
+// ---------------------------------------------------------------
+// Notification 高レベル型
+// ---------------------------------------------------------------
+
+export interface ItemAgentMessageDeltaParams {
+  itemId: string;
   delta: string;
 }
 
-export interface DoneParams {
-  session_id: string;
-  message_id: string;
+export interface TurnCompletedParams {
+  turn: TurnInfo;
 }
 
-export interface StatusResult {
-  alive: boolean;
-  model: string;
-  plan: string;
+// ---------------------------------------------------------------
+// Account
+// ---------------------------------------------------------------
+
+export interface AccountInfo {
+  /** "apikey" | "chatgpt" | "chatgptAuthTokens" */
+  type: string;
+  email?: string;
+  planType?: string;
 }
 
-export interface LoginResult {
-  ok: boolean;
-  user: string;
-}
-
-export interface ImagePasteResult {
-  sha256: string;
-  bytes: number;
+export interface AccountReadResult {
+  account: AccountInfo | null;
+  requiresOpenaiAuth: boolean;
 }
 
 // ---------------------------------------------------------------
@@ -111,7 +206,6 @@ export function validateCodexResponse(x: unknown): CodexResponse | null {
   if (!isObject(x)) return null;
   if (x.jsonrpc !== '2.0') return null;
   if (typeof x.id !== 'string') return null;
-  // result または error のいずれか
   if (x.error !== undefined) {
     if (!isObject(x.error)) return null;
     if (typeof x.error.code !== 'number') return null;
@@ -127,40 +221,42 @@ export function validateCodexNotification(x: unknown): CodexNotification | null 
   return x as unknown as CodexNotification;
 }
 
-export function validateChatResult(x: unknown): ChatResult | null {
+export function validateThreadStartResult(x: unknown): ThreadStartResult | null {
   if (!isObject(x)) return null;
-  if (typeof x.message_id !== 'string') return null;
-  if (typeof x.full_text !== 'string') return null;
-  return { message_id: x.message_id, full_text: x.full_text };
+  if (!isObject(x.thread)) return null;
+  if (typeof x.thread.id !== 'string') return null;
+  return x as unknown as ThreadStartResult;
 }
 
-export function validateStatusResult(x: unknown): StatusResult | null {
+export function validateTurnStartResult(x: unknown): TurnStartResult | null {
   if (!isObject(x)) return null;
-  if (typeof x.alive !== 'boolean') return null;
-  if (typeof x.model !== 'string') return null;
-  if (typeof x.plan !== 'string') return null;
-  return { alive: x.alive, model: x.model, plan: x.plan };
+  if (!isObject(x.turn)) return null;
+  if (typeof x.turn.id !== 'string') return null;
+  if (typeof x.turn.status !== 'string') return null;
+  return x as unknown as TurnStartResult;
 }
 
-export function validateAssistantMessageDeltaParams(
+export function validateAccountReadResult(x: unknown): AccountReadResult | null {
+  if (!isObject(x)) return null;
+  if (typeof x.requiresOpenaiAuth !== 'boolean') return null;
+  return x as unknown as AccountReadResult;
+}
+
+export function validateItemAgentMessageDeltaParams(
   x: unknown,
-): AssistantMessageDeltaParams | null {
+): ItemAgentMessageDeltaParams | null {
   if (!isObject(x)) return null;
-  if (typeof x.session_id !== 'string') return null;
-  if (typeof x.message_id !== 'string') return null;
+  if (typeof x.itemId !== 'string') return null;
   if (typeof x.delta !== 'string') return null;
-  return {
-    session_id: x.session_id,
-    message_id: x.message_id,
-    delta: x.delta,
-  };
+  return { itemId: x.itemId, delta: x.delta };
 }
 
-export function validateDoneParams(x: unknown): DoneParams | null {
+export function validateTurnCompletedParams(x: unknown): TurnCompletedParams | null {
   if (!isObject(x)) return null;
-  if (typeof x.session_id !== 'string') return null;
-  if (typeof x.message_id !== 'string') return null;
-  return { session_id: x.session_id, message_id: x.message_id };
+  if (!isObject(x.turn)) return null;
+  if (typeof x.turn.id !== 'string') return null;
+  if (typeof x.turn.status !== 'string') return null;
+  return x as unknown as TurnCompletedParams;
 }
 
 // ---------------------------------------------------------------
@@ -174,12 +270,13 @@ export interface AgentSpawnArgs {
 export interface AgentSendMessageArgs {
   projectId: string;
   content: string;
-  sessionId?: string;
+  /** 既存 thread を継続する場合に指定。省略時は新規 thread/start。 */
+  threadId?: string;
 }
 
 export interface AgentSendMessageResult {
-  message_id: string;
-  full_text: string;
+  thread_id: string;
+  turn_id: string;
 }
 
 export interface AgentShutdownArgs {

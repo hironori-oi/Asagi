@@ -31,6 +31,15 @@ interface ChatState {
   setEffort: (projectId: string, effort: ReasoningEffort) => void;
   appendUser: (projectId: string, content: string) => void;
   appendAssistantStub: (projectId: string) => void;
+  /**
+   * AS-144: useCodex 経由のストリーミング assistant message を同期する。
+   * 既存 message が同 id で存在すれば content を上書き、無ければ append する。
+   */
+  upsertAssistantStreaming: (
+    projectId: string,
+    id: string,
+    content: string,
+  ) => void;
   clear: (projectId: string) => void;
   getMessages: (projectId: string) => ChatMessage[];
   getModel: (projectId: string) => string;
@@ -91,6 +100,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
     };
     set((s) => {
       const prev = s.messagesByProject[projectId] ?? [];
+      return {
+        messagesByProject: {
+          ...s.messagesByProject,
+          [projectId]: [...prev, msg],
+        },
+      };
+    });
+  },
+  upsertAssistantStreaming: (projectId, id, content) => {
+    set((s) => {
+      const prev = s.messagesByProject[projectId] ?? [];
+      const idx = prev.findIndex((m) => m.id === id);
+      if (idx >= 0) {
+        const updated = prev.slice();
+        updated[idx] = { ...prev[idx]!, content };
+        return {
+          messagesByProject: {
+            ...s.messagesByProject,
+            [projectId]: updated,
+          },
+        };
+      }
+      const msg: ChatMessage = {
+        id,
+        role: 'assistant',
+        content,
+        createdAt: Date.now(),
+      };
       return {
         messagesByProject: {
           ...s.messagesByProject,

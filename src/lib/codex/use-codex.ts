@@ -1,22 +1,22 @@
 /**
- * useCodex React hook (AS-135)。
+ * useCodex React hook (AS-135 / DEC-018-023 / AS-144)。
  *
  * `projectId` スコープで Codex sidecar を統括する hook。
  *   - spawn / shutdown lifecycle
- *   - sendMessage 1 ターン送信
- *   - assistant_message_delta / done event 購読
+ *   - sendMessage 1 ターン送信 (Real protocol: thread/start → turn/start)
+ *   - item/agentMessage/delta / turn/completed event 購読
  *   - エラー / ストリーミング状態管理
  *
- * 開発検証ページ `/dev/codex-mock` から利用される（本番 ChatPane とは独立）。
+ * 開発検証ページ `/dev/codex-mock` および本番 ChatPane (AS-144) から利用される。
  */
 
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AgentEvents, on } from '@/lib/tauri/events';
 import {
-  validateAssistantMessageDeltaParams,
-  validateDoneParams,
+  validateItemAgentMessageDeltaParams,
+  validateTurnCompletedParams,
 } from './schemas';
 import {
   sendMessage as sendMessageImpl,
@@ -32,6 +32,9 @@ export interface UseCodexMessage {
   streaming?: boolean;
 }
 
+/** sidecar の段階状態。ChatPane 側で UI バッジに使う。 */
+export type CodexStatus = 'idle' | 'spawning' | 'ready' | 'streaming' | 'error';
+
 export interface UseCodexResult {
   messages: UseCodexMessage[];
   sendMessage: (content: string) => Promise<void>;
@@ -39,6 +42,7 @@ export interface UseCodexResult {
   shutdown: () => Promise<void>;
   isReady: boolean;
   isStreaming: boolean;
+  status: CodexStatus;
   error: string | null;
   clear: () => void;
 }
@@ -47,29 +51,30 @@ export function useCodex(projectId: string): UseCodexResult {
   const [messages, setMessages] = useState<UseCodexMessage[]>([]);
   const [isReady, setIsReady] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [status, setStatus] = useState<CodexStatus>('idle');
   const [error, setError] = useState<string | null>(null);
 
-  // streaming 中の assistant message_id 追跡（同じ id の delta は同じ message に集約）
-  const streamingIdRef = useRef<string | null>(null);
-  const sessionId = useMemo(() => `sess-${projectId}`, [projectId]);
+  // 現在ストリーミング中の assistant item id 追跡
+  const streamingItemIdRef = useRef<string | null>(null);
+  // 現在 turn を保持する thread_id (mock では project ごとに最初の thread/start が固定)
+  const threadIdRef = useRef<string | null>(null);
 
   // event 購読
   useEffect(() => {
     let unsubDelta: (() => void) | null = null;
-    let unsubDone: (() => void) | null = null;
-    let unsubError: (() => void) | null = null;
+    let unsubCompleted: (() => void) | null = null;
     let cancelled = false;
 
     (async () => {
       try {
         unsubDelta = await on<unknown>(
-          AgentEvents.assistantMessageDelta(projectId),
+          AgentEvents.itemAgentMessageDelta(projectId),
           (e) => {
-            const p = validateAssistantMessageDeltaParams(e.payload);
+            const p = validateItemAgentMessageDeltaParams(e.payload);
             if (!p) return;
             setMessages((prev) => {
               const last = prev[prev.length - 1];
-              if (last && last.id === p.message_id && last.role === 'assistant') {
+              if (last && last.id === p.itemId && last.role === 'assistant') {
                 const updated = [...prev];
                 updated[prev.length - 1] = {
                   ...last,
@@ -78,11 +83,11 @@ export function useCodex(projectId: string): UseCodexResult {
                 };
                 return updated;
               }
-              streamingIdRef.current = p.message_id;
+              streamingItemIdRef.current = p.itemId;
               return [
                 ...prev,
                 {
-                  id: p.message_id,
+                  id: p.itemId,
                   role: 'assistant',
                   content: p.delta,
                   streaming: true,
@@ -91,34 +96,27 @@ export function useCodex(projectId: string): UseCodexResult {
             });
           },
         );
-        unsubDone = await on<unknown>(
-          `agent:${projectId}:done`,
+        unsubCompleted = await on<unknown>(
+          AgentEvents.turnCompleted(projectId),
           (e) => {
-            const p = validateDoneParams(e.payload);
+            const p = validateTurnCompletedParams(e.payload);
             if (!p) return;
             setMessages((prev) =>
               prev.map((m) =>
-                m.id === p.message_id ? { ...m, streaming: false } : m,
+                m.id === streamingItemIdRef.current
+                  ? { ...m, streaming: false }
+                  : m,
               ),
             );
             setIsStreaming(false);
-            streamingIdRef.current = null;
-          },
-        );
-        unsubError = await on<unknown>(
-          AgentEvents.error(projectId),
-          (e) => {
-            const msg =
-              typeof e.payload === 'string'
-                ? e.payload
-                : JSON.stringify(e.payload);
-            setError(msg);
-            setIsStreaming(false);
+            setStatus('ready');
+            streamingItemIdRef.current = null;
           },
         );
       } catch (err) {
         if (!cancelled) {
           setError(`event subscribe failed: ${String(err)}`);
+          setStatus('error');
         }
       }
     })();
@@ -126,19 +124,21 @@ export function useCodex(projectId: string): UseCodexResult {
     return () => {
       cancelled = true;
       if (unsubDelta) unsubDelta();
-      if (unsubDone) unsubDone();
-      if (unsubError) unsubError();
+      if (unsubCompleted) unsubCompleted();
     };
   }, [projectId]);
 
   const spawn = useCallback(async () => {
     setError(null);
+    setStatus('spawning');
     try {
       await spawnSidecarImpl(projectId);
       setIsReady(true);
+      setStatus('ready');
     } catch (e) {
       setError(`spawn failed: ${String(e)}`);
       setIsReady(false);
+      setStatus('error');
     }
   }, [projectId]);
 
@@ -148,8 +148,11 @@ export function useCodex(projectId: string): UseCodexResult {
       await shutdownSidecarImpl(projectId);
       setIsReady(false);
       setIsStreaming(false);
+      setStatus('idle');
+      threadIdRef.current = null;
     } catch (e) {
       setError(`shutdown failed: ${String(e)}`);
+      setStatus('error');
     }
   }, [projectId]);
 
@@ -163,27 +166,33 @@ export function useCodex(projectId: string): UseCodexResult {
         { id: userId, role: 'user', content },
       ]);
       setIsStreaming(true);
+      setStatus('streaming');
       try {
-        await sendMessageImpl({
+        const result = await sendMessageImpl({
           projectId,
           content,
-          sessionId,
+          threadId: threadIdRef.current ?? undefined,
         });
-        // streaming は done event で false になる
+        threadIdRef.current = result.thread_id;
+        // streaming は turn/completed event で false になる
       } catch (e) {
         setError(`sendMessage failed: ${String(e)}`);
         setIsStreaming(false);
+        setStatus('error');
       }
     },
-    [projectId, sessionId],
+    [projectId],
   );
 
   const clear = useCallback(() => {
     setMessages([]);
     setError(null);
     setIsStreaming(false);
-    streamingIdRef.current = null;
-  }, []);
+    streamingItemIdRef.current = null;
+    if (status === 'streaming' || status === 'error') {
+      setStatus(isReady ? 'ready' : 'idle');
+    }
+  }, [isReady, status]);
 
   return {
     messages,
@@ -192,6 +201,7 @@ export function useCodex(projectId: string): UseCodexResult {
     shutdown,
     isReady,
     isStreaming,
+    status,
     error,
     clear,
   };

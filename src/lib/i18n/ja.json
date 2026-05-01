@@ -99,7 +99,14 @@
     },
     "stub": "[stub] Codex 統合は POC 通過後に実装",
     "saveFailed": "メッセージ保存に失敗しました",
-    "clearedToast": "セッションをクリアしました"
+    "clearedToast": "セッションをクリアしました",
+    "status": {
+      "idle": "未起動",
+      "spawning": "起動中…",
+      "ready": "待機中",
+      "streaming": "生成中…",
+      "error": "エラー"
+    }
   },
   "inspector": {
     "title": "Inspector",

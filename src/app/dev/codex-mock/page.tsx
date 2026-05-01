@@ -44,6 +44,7 @@ export default function CodexMockPage() {
         <div className="flex gap-2">
           <button
             type="button"
+            data-testid="codex-mock-spawn"
             className="rounded bg-sky-600 px-4 py-2 text-sm text-white disabled:opacity-50"
             onClick={() => void codex.spawn()}
             disabled={codex.isReady}
@@ -52,6 +53,7 @@ export default function CodexMockPage() {
           </button>
           <button
             type="button"
+            data-testid="codex-mock-shutdown"
             className="rounded bg-neutral-700 px-4 py-2 text-sm text-white disabled:opacity-50"
             onClick={() => void codex.shutdown()}
             disabled={!codex.isReady}
@@ -60,14 +62,15 @@ export default function CodexMockPage() {
           </button>
           <button
             type="button"
+            data-testid="codex-mock-clear"
             className="rounded border px-4 py-2 text-sm"
             onClick={() => codex.clear()}
           >
             clear messages
           </button>
         </div>
-        <div className="text-xs text-neutral-500">
-          status: {codex.isReady ? 'ready' : 'idle'}
+        <div data-testid="codex-mock-status" data-status={codex.status} className="text-xs text-neutral-500">
+          status: {codex.status}
           {codex.isStreaming ? ' (streaming...)' : ''}
         </div>
       </section>
@@ -80,13 +83,15 @@ export default function CodexMockPage() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">messages</h2>
-        <ul className="space-y-2 rounded border p-4">
+        <ul data-testid="codex-mock-messages" className="space-y-2 rounded border p-4">
           {codex.messages.length === 0 ? (
             <li className="text-sm text-neutral-400">(no messages yet)</li>
           ) : (
             codex.messages.map((m) => (
               <li
                 key={m.id}
+                data-testid={`codex-mock-message-${m.role}`}
+                data-streaming={m.streaming ? 'true' : 'false'}
                 className={
                   m.role === 'user'
                     ? 'text-sm font-medium text-neutral-900'
@@ -107,6 +112,7 @@ export default function CodexMockPage() {
       <section className="space-y-2">
         <label className="block text-sm font-medium">message</label>
         <textarea
+          data-testid="codex-mock-input"
           className="w-full rounded border px-3 py-2 text-sm"
           rows={3}
           value={draft}
@@ -116,6 +122,7 @@ export default function CodexMockPage() {
         />
         <button
           type="button"
+          data-testid="codex-mock-send"
           className="rounded bg-emerald-600 px-4 py-2 text-sm text-white disabled:opacity-50"
           onClick={() => void onSend()}
           disabled={!codex.isReady || codex.isStreaming || !draft.trim()}

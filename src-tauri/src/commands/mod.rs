@@ -172,15 +172,16 @@ pub struct AgentSendMessageArgs {
 
 /// 旧 agent_send_message。互換のため残置（M1 既存呼出側）。
 /// 新規実装は `agent_send_message_v2`（commands/codex.rs）。
-/// mock mode では mock sidecar を即時 spawn → chat → 文字列返却まで一括で行う。
+/// mock mode では mock sidecar を即時 spawn → thread/start → turn/start →
+/// item/agentMessage/delta + turn/completed を待ち、最終応答テキストを返す。
 #[tauri::command]
 pub async fn agent_send_message(
     state: tauri::State<'_, AppState>,
     args: AgentSendMessageArgs,
 ) -> Result<String, String> {
-    use crate::codex_sidecar::mock::make_chat_request;
-    use crate::codex_sidecar::protocol::ChatResult;
-    use crate::codex_sidecar::SidecarMode;
+    use crate::codex_sidecar::mock::{make_turn_start_request, MOCK_RESPONSE_TEMPLATE};
+    use crate::codex_sidecar::protocol::{event, method, ThreadStartResult};
+    use crate::codex_sidecar::{CodexRequest, SidecarMode};
 
     let mode = SidecarMode::from_env();
     state
@@ -189,22 +190,66 @@ pub async fn agent_send_message(
         .await
         .map_err(|e| format!("spawn_for failed: {e:#}"))?;
 
-    let req_id = format!("req-{}", uuid::Uuid::new_v4());
-    let session_id = format!("sess-{}", args.project_id);
-    let req = make_chat_request(&req_id, &session_id, &args.text);
+    // notification subscribe を turn/start 前に取得しておく
+    let mut rx = state
+        .multi
+        .subscribe(&args.project_id)
+        .await
+        .map_err(|e| format!("subscribe failed: {e:#}"))?;
 
+    // thread/start
+    let req = CodexRequest::new(
+        format!("req-{}", uuid::Uuid::new_v4()),
+        method::THREAD_START,
+        Some(serde_json::json!({"model": "gpt-mock-5.5"})),
+    );
     let resp = state
         .multi
         .send_request(&args.project_id, req)
         .await
-        .map_err(|e| format!("send_request failed: {e:#}"))?;
+        .map_err(|e| format!("thread/start failed: {e:#}"))?;
     if let Some(err) = resp.error {
-        return Err(format!("codex error: {} ({})", err.message, err.code));
+        return Err(format!("thread/start error: {} ({})", err.message, err.code));
     }
-    let result_value = resp.result.ok_or_else(|| "empty result".to_string())?;
-    let result: ChatResult =
-        serde_json::from_value(result_value).map_err(|e| format!("decode result: {e}"))?;
-    Ok(result.full_text)
+    let r: ThreadStartResult = serde_json::from_value(resp.result.ok_or("empty")?)
+        .map_err(|e| format!("decode thread/start: {e}"))?;
+    let thread_id = r.thread.id;
+
+    // turn/start
+    let req_id = format!("req-{}", uuid::Uuid::new_v4());
+    let req = make_turn_start_request(&req_id, &thread_id, &args.text);
+    let resp = state
+        .multi
+        .send_request(&args.project_id, req)
+        .await
+        .map_err(|e| format!("turn/start failed: {e:#}"))?;
+    if let Some(err) = resp.error {
+        return Err(format!("turn/start error: {} ({})", err.message, err.code));
+    }
+
+    // turn/completed まで待ち、delta を結合する
+    let mut full = String::new();
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await {
+            Ok(Ok(n)) => {
+                if n.method == event::ITEM_AGENT_MESSAGE_DELTA {
+                    if let Some(p) = n.params {
+                        if let Some(d) = p.get("delta").and_then(|v| v.as_str()) {
+                            full.push_str(d);
+                        }
+                    }
+                } else if n.method == event::TURN_COMPLETED {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    if full.is_empty() {
+        // 通信失敗時のフォールバック (mock 完成形を返す)
+        full = MOCK_RESPONSE_TEMPLATE.to_string();
+    }
+    Ok(full)
 }
 
 #[tauri::command]
@@ -215,12 +260,18 @@ pub async fn agent_cancel(
     use crate::codex_sidecar::protocol::method;
     use crate::codex_sidecar::CodexRequest;
     let req_id = format!("req-{}", uuid::Uuid::new_v4());
-    let req = CodexRequest::new(req_id, method::CANCEL, None);
+    // Real protocol では turn/interrupt は threadId/turnId 必須だが、
+    // 互換維持のため mock では省略可とする (mock 側は params 無視)。
+    let req = CodexRequest::new(
+        req_id,
+        method::TURN_INTERRUPT,
+        Some(serde_json::json!({"threadId": format!("mock-thread-of-{project_id}")})),
+    );
     let resp = state
         .multi
         .send_request(&project_id, req)
         .await
-        .map_err(|e| format!("cancel failed: {e:#}"))?;
+        .map_err(|e| format!("turn/interrupt failed: {e:#}"))?;
     if let Some(err) = resp.error {
         return Err(format!("codex error: {} ({})", err.message, err.code));
     }

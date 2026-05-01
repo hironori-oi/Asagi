@@ -17,15 +17,17 @@ import {
 import { invoke } from '@/lib/tauri/invoke';
 import { cn } from '@/lib/utils';
 import { SLASH_ITEMS, SlashPalette, type SlashPaletteItem } from './slash-palette';
+import { useCodexContext } from './codex-context';
 
 const FALLBACK_MODELS = ['gpt-5.5-codex', 'gpt-5-codex', 'o4-mini'];
 const EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high'];
 
 /**
- * 入力エリア（AS-115 / AS-117 / AS-120）。
+ * 入力エリア（AS-115 / AS-117 / AS-120 / AS-144）。
  *
- * - 送信時: appendUser → SQLite create_message (user) → setTimeout 200ms → appendAssistantStub → create_message (assistant)
- *   Tauri 非接続環境では invoke エラーを toast 表示しつつ UI 上は進行させる。
+ * - 送信時: ChatPane が提供する `CodexContext.send()` に委譲する。
+ *   ChatPane 側で appendUser → SQLite create_message (user) → useCodex.sendMessage を順に実行する。
+ * - Context が無い場合 (legacy mount) は従来のスタブ応答にフォールバック。
  * - draft が `/` で始まると SlashPalette を表示。Enter で実行。
  */
 export function InputArea() {
@@ -46,6 +48,7 @@ export function InputArea() {
 
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const setHelpOpen = useUiStore((s) => s.setHelpOpen);
+  const codexCtx = useCodexContext();
 
   const [models, setModels] = useState<string[]>(FALLBACK_MODELS);
 
@@ -91,10 +94,16 @@ export function InputArea() {
   const send = async () => {
     const value = draft.trim();
     if (!value) return;
+    setDraft(activeId, '');
 
+    // AS-144: ChatPane が CodexContext.send を提供している場合はそちらに委譲する。
+    if (codexCtx) {
+      await codexCtx.send(value);
+      return;
+    }
+
+    // ---- legacy fallback (Context 外で InputArea を直接使うテスト等) ----
     appendUser(activeId, value);
-
-    // SQLite に永続化（active session が無ければスキップ — fallback）
     if (activeSessionId) {
       try {
         await invoke<string>('create_message', {
@@ -104,8 +113,6 @@ export function InputArea() {
         toast.error(t('saveFailed'));
       }
     }
-
-    // モック応答。POC 通過後に invoke('agent_send_message', ...) + listen('agent:{id}:assistant_message_delta')
     setTimeout(async () => {
       const stub = '[stub] Codex 統合は POC 通過後に実装';
       appendAssistantStub(activeId);
@@ -178,15 +185,20 @@ export function InputArea() {
               aria-label={t('placeholder')}
               placeholder={t('placeholder')}
               rows={2}
+              data-testid="chat-input-textarea"
               className="selectable min-h-[40px] flex-1 resize-none bg-transparent px-2 py-1 text-sm placeholder:text-muted-foreground focus-visible:outline-none"
             />
             <Button
               type="button"
               size="icon"
               onClick={() => void send()}
-              disabled={draft.trim().length === 0}
+              disabled={
+                draft.trim().length === 0 ||
+                (codexCtx ? codexCtx.isStreaming : false)
+              }
               aria-label={t('send')}
               title={t('send')}
+              data-testid="chat-send-button"
             >
               <Send strokeWidth={1.5} className="h-4 w-4" />
             </Button>
