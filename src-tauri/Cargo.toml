@@ -1,0 +1,79 @@
+[package]
+name = "asagi"
+version = "0.1.0"
+description = "Asagi - Codex Multi-Project IDE (PRJ-018)"
+authors = ["hironori-oi"]
+license = "TBD"
+edition = "2021"
+rust-version = "1.94"
+
+# 配布バイナリ生成時のメタ情報
+[package.metadata.bundle]
+identifier = "jp.improver.asagi"
+
+[lib]
+name = "asagi_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.1", features = [] }
+
+[dependencies]
+# Tauri core
+tauri = { version = "2.1", features = [] }
+tauri-plugin-shell = "2.0"
+tauri-plugin-dialog = "2.0"
+tauri-plugin-fs = "2.0"
+tauri-plugin-store = "2.1"
+tauri-plugin-clipboard-manager = "2.0"
+
+# Async / runtime
+tokio = { version = "1.41", features = ["rt-multi-thread", "macros", "sync", "time", "process", "fs", "io-util"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# SQLite (bundled で同梱、FTS5 有効)
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+
+# Keyring (POC 通過後に本格利用、現状は依存追加のみ)
+keyring = "2.3"
+
+# Clipboard / image
+arboard = "3.6"
+image = { version = "0.25", default-features = false, features = ["png", "bmp"] }
+
+# File watch (auth.json mtime watch 用、POC 通過後)
+notify = "6.1"
+
+# Diff (M2 で本格利用)
+similar = "2.6"
+
+# Error / log
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Misc
+dirs = "5.0"
+uuid = { version = "1.10", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Windows-only (JobObject for child process kill cascade)
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_System_JobObjects", "Win32_Foundation"] }
+
+[features]
+# デフォルトで Tauri custom protocol 有効
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+incremental = false
+opt-level = 3
+strip = true

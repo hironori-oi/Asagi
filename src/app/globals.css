@@ -1,0 +1,30 @@
+@import "../styles/tokens.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --------------------------------------------------------------------
+ * Asagi base layer
+ * tokens.css の色変数を Tailwind utility 経由で使用
+ * -------------------------------------------------------------------- */
+@layer base {
+  html,
+  body {
+    height: 100%;
+    overscroll-behavior: none;
+  }
+
+  /* Tauri WebView 上での text selection / drag を抑制（chat 入力以外） */
+  body {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable="true"],
+  .selectable {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+}

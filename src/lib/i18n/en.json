@@ -1,0 +1,53 @@
+{
+  "app": {
+    "name": "Asagi",
+    "tagline": "Codex Multi-Project IDE"
+  },
+  "welcome": {
+    "step": "Step {current} / {total}",
+    "next": "Next",
+    "back": "Back",
+    "finish": "Get started",
+    "skip": "Skip",
+    "brand": {
+      "title": "Welcome to Asagi",
+      "subtitle": "Bring your ChatGPT subscription into a calm Japanese-first interface.",
+      "body": "Asagi is a Japanese-first IDE that lets non-experts work with Codex. Switch between projects like Slack, paste images, and chat in your own language.",
+      "highlightTitle": "Four pillars of Asagi",
+      "highlights": {
+        "japanese": "Japanese UI first",
+        "design": "Linear-grade calm design",
+        "multiProject": "Slack-style multi-project switching",
+        "local": "Local persistence with full-text search"
+      }
+    },
+    "oauth": {
+      "title": "Sign in with ChatGPT",
+      "subtitle": "Use your subscription directly. No API key required.",
+      "body": "Pressing the button opens ChatGPT's auth flow in your browser. Asagi automatically detects when you finish.",
+      "loginButton": "Start login (enabled after Phase 0 POC)",
+      "note": "Stub before Phase 0 POC clearance. The real implementation spawns `codex login` via the Tauri Shell plugin."
+    },
+    "permissions": {
+      "title": "Permissions & sample",
+      "subtitle": "What Asagi can access on your machine.",
+      "items": {
+        "codexProcess": "Spawn and talk to the Codex CLI process",
+        "localDb": "Persist chat history in ~/.asagi/history.db",
+        "keyring": "Use the OS keyring for secure settings",
+        "noTelemetry": "No telemetry. Chat logs never leave your device."
+      },
+      "sampleTitle": "Sample (enabled after Phase 0 POC)",
+      "sampleBody": "Type 'hello' to receive a stub response. Real integration arrives with AS-110."
+    }
+  },
+  "shell": {
+    "titlebar": {
+      "appName": "Asagi"
+    },
+    "statusbar": {
+      "ready": "Ready",
+      "stub": "v0.1.0 scaffold"
+    }
+  }
+}

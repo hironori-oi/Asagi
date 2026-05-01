@@ -1,0 +1,12 @@
+# Tauri アイコン配置先
+#
+# 本リポジトリの初期状態ではロゴ未確定（DEC-018-015）のため、
+# 実アイコンファイルは未配置。tauri build を実行する場合は
+# 以下のファイルを配置すること:
+#
+#   - 32x32.png
+#   - 128x128.png
+#   - icon.ico (Windows)
+#   - icon.icns (macOS)
+#
+# AIDesigner MCP で生成予定（オーナー判断後）。

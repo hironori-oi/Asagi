@@ -1,0 +1,53 @@
+{
+  "app": {
+    "name": "Asagi",
+    "tagline": "Codex マルチプロジェクト IDE"
+  },
+  "welcome": {
+    "step": "{current} / {total} ステップ",
+    "next": "次へ",
+    "back": "戻る",
+    "finish": "はじめる",
+    "skip": "スキップ",
+    "brand": {
+      "title": "Asagi へようこそ",
+      "subtitle": "ChatGPT のサブスクをそのまま、日本語の落ち着いた画面で。",
+      "body": "Asagi（浅葱）は、Codex を素人でも触れる日本語ファーストの IDE です。複数のプロジェクトを Slack のように切り替えながら、画像も貼り付けられる対話型コーディングを目指します。",
+      "highlightTitle": "Asagi の 4 つの特徴",
+      "highlights": {
+        "japanese": "日本語 UI ファースト",
+        "design": "Linear 級の落ち着いたデザイン",
+        "multiProject": "Slack 風の Multi-Project 切替",
+        "local": "ローカル永続化と全文検索"
+      }
+    },
+    "oauth": {
+      "title": "ChatGPT でログイン",
+      "subtitle": "サブスクの権限をそのまま使います。API Key の入力は不要です。",
+      "body": "「ログインを開始」を押すと、ブラウザで ChatGPT の認証画面が開きます。承認後、Asagi が自動的に検知して次の画面へ進みます。",
+      "loginButton": "ログインを開始（POC 通過後に有効化）",
+      "note": "※ Phase 0 POC 通過前のスタブです。本実装では Codex CLI の `codex login` を Tauri Shell プラグインで起動します。"
+    },
+    "permissions": {
+      "title": "権限の確認とサンプル",
+      "subtitle": "Asagi がアクセスする領域を簡単に説明します。",
+      "items": {
+        "codexProcess": "Codex CLI プロセスの起動・通信（OpenAI API 接続）",
+        "localDb": "ローカル DB（~/.asagi/history.db）への会話保存",
+        "keyring": "OS キーリングを使った設定の安全保管",
+        "noTelemetry": "テレメトリ送信なし。会話ログは外部送信しません。"
+      },
+      "sampleTitle": "サンプル（POC 通過後に有効化）",
+      "sampleBody": "「こんにちは」と送るとデモ応答が返ります。実機統合は AS-110 以降。"
+    }
+  },
+  "shell": {
+    "titlebar": {
+      "appName": "Asagi"
+    },
+    "statusbar": {
+      "ready": "準備完了",
+      "stub": "v0.1.0 雛形"
+    }
+  }
+}
