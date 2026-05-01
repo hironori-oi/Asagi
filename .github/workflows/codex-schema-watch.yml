@@ -1,0 +1,161 @@
+# =============================================================================
+# Asagi (PRJ-018) — Codex CLI schema watch (RAs-14 mitigation)
+# =============================================================================
+# 目的:
+#   - 週次で `codex app-server generate-ts` を実行し、TypeScript schema を
+#     snapshot として保存
+#   - 直近の前 snapshot との diff を取得
+#   - breaking change 候補を heuristic で検知し、検知時は GitHub Issue を起票
+#
+# Trigger:
+#   - 毎週月曜 09:00 UTC (= 月曜 18:00 JST)
+#   - workflow_dispatch (手動実行)
+#
+# 関連:
+#   - scripts/codex-schema-snapshot.mjs
+#   - codex-schema/README.md
+#   - reports/research-report-v2.md § 5.6
+#   - decisions.md DEC-018-022 / DEC-018-023
+#   - risks.md RAs-14
+# =============================================================================
+
+name: Codex schema watch
+
+on:
+  schedule:
+    # 毎週月曜 09:00 UTC = 月曜 18:00 JST
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: codex-schema-watch
+  cancel-in-progress: false
+
+jobs:
+  schema-snapshot:
+    name: Codex schema snapshot
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        # 重要: このワークフローは asagi-app サブディレクトリに対して動く前提。
+        # リポジトリ直下が asagi-app 自体になるとこのパスは要見直し。
+        working-directory: .
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # -------------------------------------------------------------------------
+      # Codex CLI install
+      #
+      # 公式 install 手順 (リサーチ v2 § 1.2 で確認):
+      #   npm i -g @openai/codex
+      #
+      # 注意:
+      #   - npm 配布パッケージ名は `@openai/codex` (リサーチ v1/v2 で確認)
+      #   - 公式インストーラ (curl | sh) も存在するが、CI では npm 経由が冪等で安全
+      #   - 失敗時は "::warning" を出して continue-on-error 相当に。snapshot
+      #     スクリプト側が「Codex CLI 未検出 → exit 0 で skip」を担保しているが、
+      #     CI 上でインストール失敗が発生した事実は出力に残す
+      # -------------------------------------------------------------------------
+      - name: Install Codex CLI
+        id: codex-install
+        run: |
+          set -e
+          # TODO: 公式パッケージ名が将来変わった場合は要更新
+          # 現時点 (2026-05-02 リサーチ v2 確認) では @openai/codex
+          if npm i -g @openai/codex; then
+            echo "installed=true" >> "$GITHUB_OUTPUT"
+            codex --version || true
+          else
+            echo "installed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Codex CLI install failed. Snapshot script will skip."
+          fi
+
+      - name: Run schema snapshot
+        id: snapshot
+        # exit code 1 (breaking detected) は後続ステップで Issue 化したいので
+        # ここでは fail させない。スクリプトが exit 0/1 のいずれを返したかを
+        # outputs に記録。
+        run: |
+          set +e
+          node scripts/codex-schema-snapshot.mjs
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          # 0=ok, 1=breaking or generate-ts failure
+          if [ "$rc" -eq 0 ]; then
+            echo "breaking=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "breaking=true" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      - name: Compute today date (UTC)
+        id: date
+        run: echo "today=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload snapshot artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-schema-${{ steps.date.outputs.today }}
+          path: |
+            codex-schema/snapshots/
+            codex-schema/diffs/
+          if-no-files-found: warn
+          retention-days: 90
+
+      # -------------------------------------------------------------------------
+      # Breaking change 検知時に GitHub Issue を自動起票
+      # 本文には breaking 候補レポート (codex-schema/diffs/YYYY-MM-DD-breaking.md)
+      # を貼付。同日内の重複起票は title の日付で人間が回避する想定。
+      # -------------------------------------------------------------------------
+      - name: Open issue on breaking change
+        if: steps.snapshot.outputs.breaking == 'true'
+        uses: actions/github-script@v7
+        env:
+          DATE: ${{ steps.date.outputs.today }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const date = process.env.DATE;
+            const breakingPath = path.join('codex-schema', 'diffs', `${date}-breaking.md`);
+            const diffPath = path.join('codex-schema', 'diffs', `${date}.diff`);
+            let body = `## Codex schema breaking change candidates\n\n`;
+            body += `Detected at workflow run [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).\n\n`;
+            if (fs.existsSync(breakingPath)) {
+              const txt = fs.readFileSync(breakingPath, 'utf8');
+              body += `### Breaking report\n\n${txt}\n`;
+            } else {
+              body += `### Breaking report\n\n(breaking report not found at ${breakingPath} — generate-ts may have failed; check workflow logs)\n`;
+            }
+            if (fs.existsSync(diffPath)) {
+              const diffTxt = fs.readFileSync(diffPath, 'utf8');
+              const head = diffTxt.length > 8000 ? diffTxt.slice(0, 8000) + '\n... (truncated)' : diffTxt;
+              body += `\n### Diff (truncated to 8000 chars)\n\n<details><summary>diff</summary>\n\n${head}\n\n</details>\n`;
+            }
+            body += `\n---\n`;
+            body += `Refer to \`codex-schema/README.md\` for the response flow.\n`;
+            body += `See also: \`reports/research-report-v2.md\` and \`risks.md\` RAs-14.\n`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[codex-schema] Breaking change detected (${date})`,
+              body,
+              labels: ['codex-schema', 'breaking-change-candidate'],
+            });
+
+      - name: Mark workflow failure on breaking
+        if: steps.snapshot.outputs.breaking == 'true'
+        run: |
+          echo "::error::Codex schema breaking change candidates detected. See created issue."
+          exit 1
