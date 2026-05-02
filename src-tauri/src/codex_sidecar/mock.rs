@@ -33,9 +33,9 @@ use tokio::time::{sleep, Duration};
 
 use super::protocol::{
     event, method, AccountInfo, AccountReadResult, ClientCapabilities, ClientInfo,
-    CodexNotification, CodexRequest, CodexResponse, InitializeParams, InitializeResult,
-    InputItem, ItemAgentMessageDeltaParams, RateLimitBucket, ThreadInfo, ThreadStartParams,
-    ThreadStartResult, TurnCompletedParams, TurnInfo, TurnStartParams, TurnStartResult,
+    CodexNotification, CodexRequest, CodexResponse, InitializeParams, InitializeResult, InputItem,
+    ItemAgentMessageDeltaParams, RateLimitBucket, ThreadInfo, ThreadStartParams, ThreadStartResult,
+    TurnCompletedParams, TurnInfo, TurnStartParams, TurnStartResult,
 };
 use super::{CodexSidecar, NOTIFICATION_CHANNEL_CAPACITY};
 
@@ -51,8 +51,7 @@ pub const MOCK_CHAT_TOKEN_COUNT: usize = 10;
 pub const MOCK_CHAT_TOKEN_DELAY_MS: u64 = 50;
 
 /// mock app-server の応答テンプレート（全 token を結合した完成形）。
-pub const MOCK_RESPONSE_TEMPLATE: &str =
-    "mock app-server からの応答です（モデル: gpt-mock-5.5）";
+pub const MOCK_RESPONSE_TEMPLATE: &str = "mock app-server からの応答です（モデル: gpt-mock-5.5）";
 
 /// Item ID prefix。
 const ITEM_ID_PREFIX: &str = "mock-item-";
@@ -144,7 +143,10 @@ impl MockCodexSidecar {
         // initialized notification を待たずに最初の result を返す。
         // 実際の handshake 完了は後続の `initialized` notification で行う。
         let result = InitializeResult {
-            user_agent: format!("mock-codex-app-server/0.0.1 (asagi-mock; project={})", self.project_id),
+            user_agent: format!(
+                "mock-codex-app-server/0.0.1 (asagi-mock; project={})",
+                self.project_id
+            ),
             codex_home: "~/.codex-mock".into(),
             platform_family: "mock".into(),
             platform_os: std::env::consts::OS.into(),
@@ -234,7 +236,11 @@ impl MockCodexSidecar {
                 })),
             ));
             // turn/completed (interrupted の場合は status を切替)
-            let final_status = if interrupted { "interrupted" } else { "completed" };
+            let final_status = if interrupted {
+                "interrupted"
+            } else {
+                "completed"
+            };
             let _ = notif.send(CodexNotification::new(
                 event::TURN_COMPLETED,
                 Some(
@@ -344,7 +350,11 @@ impl MockCodexSidecar {
                 // DEC-018-028 QW1 (F3 Auth Watchdog): mock を「契約サーバ」として
                 // 環境変数で挙動切替可能にする。Real 切替時は CLI が同等の状態を
                 // 返却するため Asagi 側の watchdog コードは無修正で済む。
-                if std::env::var("ASAGI_MOCK_FAIL_ACCOUNT_READ").ok().as_deref() == Some("1") {
+                if std::env::var("ASAGI_MOCK_FAIL_ACCOUNT_READ")
+                    .ok()
+                    .as_deref()
+                    == Some("1")
+                {
                     return CodexResponse::err(
                         id,
                         -32099,
@@ -513,11 +523,12 @@ impl MockCodexSidecar {
                 self.handle_turn_interrupt(req.params.clone());
                 CodexResponse::ok(id, json!({}))
             }
-            method::TURN_STEER => CodexResponse::ok(
+            method::TURN_STEER => CodexResponse::ok(id, json!({"turnId": "mock-turn-steered"})),
+            other => CodexResponse::err(
                 id,
-                json!({"turnId": "mock-turn-steered"}),
+                ERR_METHOD_NOT_FOUND,
+                format!("method not found: {other}"),
             ),
-            other => CodexResponse::err(id, ERR_METHOD_NOT_FOUND, format!("method not found: {other}")),
         }
     }
 
@@ -815,7 +826,10 @@ mod tests {
                 _ => break,
             }
         }
-        assert!(got_interrupted, "turn/completed must arrive with status=interrupted");
+        assert!(
+            got_interrupted,
+            "turn/completed must arrive with status=interrupted"
+        );
         // interrupted なので 10 token 全部は流れていないはず
         assert!(
             deltas < MOCK_CHAT_TOKEN_COUNT,

@@ -70,6 +70,20 @@ CODEX_BIN_PATH=/path/to/codex node scripts/codex-schema-snapshot.mjs
 
 初回 snapshot は CI 初回実行時または開発機での手動実行時に生成されます。Phase 0 POC 通過時点のものを正式 baseline として確定し、それ以降の diff を Asagi 側の追従根拠とする運用を推奨します（DEC として起票候補）。
 
+### Asagi contract baseline tag
+
+| baseline tag | 確定日 | 対応 Codex CLI | 確定根拠 | 物理コード |
+|---|---|---|---|---|
+| `0.128.0-asagi-contract-v1` | 2026-05-02 | 0.128.0 | `reports/poc-phase0-result.md` § 3 / DEC-018-033 | `src-tauri/src/codex_sidecar/contract.rs` |
+
+`0.128.0-asagi-contract-v1` は Phase 0 POC #2〜#5（オーナー実機 Win11 / Pro 5x プラン）で実測確定した 5 点（起動引数 / thread.id 取得経路 / item/completed type / image input field / JobObject 挙動）を `contract.rs` に codify した版を指します。本 README に列挙されたタグと `contract.rs` のヘッダコメントは常に一致させること（DEC-018-034 厳守事項）。
+
+タグ繰り上げ手順:
+
+1. 新スキーマ検知 → `contract.rs` 更新
+2. 本 README の表に新タグ行を追記（旧行は履歴として残す）
+3. `decisions.md` DEC-018-033 改訂 + 起因 release 番号を明記
+
 ## 参照
 
 - `projects/PRJ-018/reports/research-report-v2.md` § 主要発見 2 / § 5.6

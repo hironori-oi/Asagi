@@ -129,7 +129,10 @@ pub async fn agent_send_message_v2(
             .await
             .map_err(|e| format!("thread/start failed: {e:#}"))?;
         if let Some(err) = resp.error {
-            return Err(format!("thread/start error: {} ({})", err.message, err.code));
+            return Err(format!(
+                "thread/start error: {} ({})",
+                err.message, err.code
+            ));
         }
         let r: ThreadStartResult = serde_json::from_value(resp.result.ok_or("empty")?)
             .map_err(|e| format!("decode thread/start: {e}"))?;

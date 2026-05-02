@@ -10,13 +10,16 @@
 #[cfg(windows)]
 mod imp {
     use anyhow::{anyhow, Context, Result};
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Foundation::{CloseHandle, BOOL, HANDLE};
     use windows::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
-        JobObjectExtendedLimitInformation, JOBOBJECT_BASIC_LIMIT_INFORMATION,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
+        JobObjectExtendedLimitInformation, SetInformationJobObject,
+        JOBOBJECT_BASIC_LIMIT_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    };
 
     /// Windows JobObject ハンドル。Drop で CloseHandle → 紐付け済プロセスが全 kill される。
     pub struct WinJobObject {
@@ -67,12 +70,8 @@ mod imp {
         /// 子プロセスを JobObject に紐付ける。
         pub fn assign_pid(&self, pid: u32) -> Result<()> {
             unsafe {
-                let proc_handle = OpenProcess(
-                    PROCESS_TERMINATE | PROCESS_SET_QUOTA,
-                    false,
-                    pid,
-                )
-                .with_context(|| format!("OpenProcess(pid={pid}) failed"))?;
+                let proc_handle = OpenProcess(PROCESS_TERMINATE | PROCESS_SET_QUOTA, false, pid)
+                    .with_context(|| format!("OpenProcess(pid={pid}) failed"))?;
                 if proc_handle.is_invalid() {
                     return Err(anyhow!("OpenProcess returned invalid handle for pid={pid}"));
                 }
@@ -88,6 +87,32 @@ mod imp {
 
         pub fn handle(&self) -> HANDLE {
             self.handle
+        }
+    }
+
+    /// 指定 PID が「いずれかの JobObject」に属しているかを返す（AS-143 検証用）。
+    ///
+    /// JobHandle に NULL を渡すと、Windows は「any job」をチェックする。
+    /// POC #5 の自己検証ロジックと等価（pid → IsProcessInJob(NULL)）。
+    /// nested Job として動作した場合も true を返す。
+    pub fn is_process_in_any_job(pid: u32) -> Result<bool> {
+        unsafe {
+            let proc_handle =
+                OpenProcess(PROCESS_QUERY_INFORMATION, false, pid).with_context(|| {
+                    format!("OpenProcess(PROCESS_QUERY_INFORMATION, pid={pid}) failed")
+                })?;
+            if proc_handle.is_invalid() {
+                return Err(anyhow!(
+                    "OpenProcess returned invalid handle for pid={pid} (IsProcessInJob)"
+                ));
+            }
+
+            let mut result: BOOL = BOOL(0);
+            let res = IsProcessInJob(proc_handle, None, &mut result)
+                .map_err(|e| anyhow!("IsProcessInJob(pid={pid}) failed: {e}"));
+            let _ = CloseHandle(proc_handle);
+            res?;
+            Ok(result.as_bool())
         }
     }
 
@@ -116,6 +141,11 @@ mod imp {
         pub fn assign_pid(&self, _pid: u32) -> Result<()> {
             Ok(())
         }
+    }
+
+    /// 非 Windows: 常に false（JobObject 概念なし）。
+    pub fn is_process_in_any_job(_pid: u32) -> Result<bool> {
+        Ok(false)
     }
 }
 

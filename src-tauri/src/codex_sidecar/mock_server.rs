@@ -82,11 +82,7 @@ pub async fn run_stdio_server() -> Result<()> {
         let raw: JsonValue = match serde_json::from_str(line) {
             Ok(v) => v,
             Err(e) => {
-                let err = CodexResponse::err(
-                    "<parse-error>",
-                    -32700,
-                    format!("parse error: {e}"),
-                );
+                let err = CodexResponse::err("<parse-error>", -32700, format!("parse error: {e}"));
                 let _ = out_tx.send(serde_json::to_value(err)?).await;
                 continue;
             }
@@ -106,11 +102,8 @@ pub async fn run_stdio_server() -> Result<()> {
         let req: CodexRequest = match serde_json::from_value(raw) {
             Ok(r) => r,
             Err(e) => {
-                let err = CodexResponse::err(
-                    "<parse-error>",
-                    -32600,
-                    format!("invalid request: {e}"),
-                );
+                let err =
+                    CodexResponse::err("<parse-error>", -32600, format!("invalid request: {e}"));
                 let _ = out_tx.send(serde_json::to_value(err)?).await;
                 continue;
             }
@@ -248,7 +241,11 @@ pub async fn run_stdio_server() -> Result<()> {
                         .unwrap_or(JsonValue::Null),
                     )
                     .await;
-                let final_status = if interrupted { "interrupted" } else { "completed" };
+                let final_status = if interrupted {
+                    "interrupted"
+                } else {
+                    "completed"
+                };
                 let _ = out_tx_task
                     .send(
                         serde_json::to_value(CodexNotification::new(

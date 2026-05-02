@@ -1,7 +1,8 @@
 //! Codex sidecar 統合モジュール (AS-130)。
 //!
-//! `codex app-server --listen stdio` (DEC-018-009) との JSON-RPC 2.0 通信層を
-//! trait で抽象化し、Real / Mock を切り替え可能にする。
+//! `codex app-server --listen stdio://` (DEC-018-009 / DEC-018-033 ①) との
+//! JSON-RPC 2.0 通信層を trait で抽象化し、Real / Mock を切り替え可能にする。
+//! 起動引数 / 諸 schema 文字列は `contract` モジュールに集約（DEC-018-033 / DEC-018-034）。
 //!
 //! # 切替方法
 //!
@@ -25,6 +26,8 @@ use std::str::FromStr;
 use tokio::sync::broadcast;
 
 pub mod auth_watchdog;
+pub mod bin_resolver;
+pub mod contract;
 pub mod mock;
 pub mod mock_server;
 pub mod multi;
@@ -46,9 +49,12 @@ pub enum SidecarMode {
 
 impl SidecarMode {
     /// 環境変数 `ASAGI_SIDECAR_MODE` から解決。
-    /// dev デフォルト = Mock、未設定でも Mock。
-    /// Real impl は Phase 0 POC 通過まで panic するため、明示的に指定された
-    /// 場合のみ Real を返す。
+    /// - 未設定 / unknown → `Mock`（dev / 自動テスト既定）
+    /// - `"real"` → `Real`（Phase 1 (M1 Real impl) / AS-140 完了以降）
+    /// - `"mock"` → `Mock`
+    ///
+    /// **Phase 1 移行**: AS-140.0〜140.5 完了により Real impl は POC pending を脱した。
+    /// オーナー実機 smoke は `ASAGI_SIDECAR_MODE=real` を export して起動することで実施可能。
     pub fn from_env() -> Self {
         std::env::var("ASAGI_SIDECAR_MODE")
             .ok()
@@ -121,5 +127,20 @@ mod tests {
         // 検討すべきだが、現状は単独 process 内で十分。
         std::env::remove_var("ASAGI_SIDECAR_MODE");
         assert_eq!(SidecarMode::from_env(), SidecarMode::Mock);
+    }
+
+    /// AS-140.5: Real mode を指定すると factory が RealCodexSidecar を返す。
+    /// （start() を呼ばない範囲 ＝ codex プロセス無しでも安全に検証可能）
+    #[test]
+    fn create_sidecar_with_real_mode_returns_unstarted_real() {
+        let sc = create_sidecar(SidecarMode::Real, "p-factory-real");
+        // 未 start なら必ず is_alive == false（実装契約）
+        assert!(!sc.is_alive());
+    }
+
+    #[test]
+    fn create_sidecar_with_mock_mode_returns_unstarted_mock() {
+        let sc = create_sidecar(SidecarMode::Mock, "p-factory-mock");
+        assert!(!sc.is_alive());
     }
 }

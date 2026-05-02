@@ -60,7 +60,11 @@ pub struct CodexRequest {
 }
 
 impl CodexRequest {
-    pub fn new(id: impl Into<String>, method: impl Into<String>, params: Option<JsonValue>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        method: impl Into<String>,
+        params: Option<JsonValue>,
+    ) -> Self {
         Self {
             jsonrpc: JSONRPC_VERSION.to_string(),
             id: id.into(),
@@ -182,10 +186,8 @@ pub mod event {
     pub const ITEM_REASONING_TEXT_DELTA: &str = "item/reasoning/textDelta";
 
     // Approvals
-    pub const ITEM_COMMAND_EXEC_REQUEST_APPROVAL: &str =
-        "item/commandExecution/requestApproval";
-    pub const ITEM_FILE_CHANGE_REQUEST_APPROVAL: &str =
-        "item/fileChange/requestApproval";
+    pub const ITEM_COMMAND_EXEC_REQUEST_APPROVAL: &str = "item/commandExecution/requestApproval";
+    pub const ITEM_FILE_CHANGE_REQUEST_APPROVAL: &str = "item/fileChange/requestApproval";
 
     // Account
     pub const ACCOUNT_UPDATED: &str = "account/updated";
@@ -329,7 +331,11 @@ pub struct TurnCompletedParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AccountReadParams {
-    #[serde(rename = "refreshToken", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "refreshToken",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub refresh_token: Option<bool>,
 }
 
@@ -354,7 +360,11 @@ pub struct AccountInfo {
     /// `account/rateLimits/read.rateLimitsByLimitId` の型を Account 側にも露出して
     /// `account/read` レスポンスでの限定的な情報共有も許容する (Real CLI 仕様の
     /// 互換最大化、リサーチ § 1.1 + § 4.2)。
-    #[serde(rename = "rateLimitsByLimitId", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "rateLimitsByLimitId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub rate_limits_by_limit_id: Option<HashMap<String, RateLimitBucket>>,
 }
 
@@ -437,7 +447,9 @@ mod tests {
 
     #[test]
     fn input_item_text_serializes_with_type_tag() {
-        let it = InputItem::Text { text: "hello".into() };
+        let it = InputItem::Text {
+            text: "hello".into(),
+        };
         let v = serde_json::to_value(it).unwrap();
         assert_eq!(v["type"], "text");
         assert_eq!(v["text"], "hello");
@@ -445,7 +457,9 @@ mod tests {
 
     #[test]
     fn input_item_local_image_serializes_camel_case() {
-        let it = InputItem::LocalImage { path: "C:/img.png".into() };
+        let it = InputItem::LocalImage {
+            path: "C:/img.png".into(),
+        };
         let v = serde_json::to_value(it).unwrap();
         assert_eq!(v["type"], "localImage");
         assert_eq!(v["path"], "C:/img.png");

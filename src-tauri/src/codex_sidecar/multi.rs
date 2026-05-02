@@ -14,7 +14,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
-use super::{create_sidecar, CodexNotification, CodexRequest, CodexResponse, CodexSidecar, SidecarMode};
+use super::{
+    create_sidecar, CodexNotification, CodexRequest, CodexResponse, CodexSidecar, SidecarMode,
+};
 
 pub type ProjectId = String;
 
@@ -65,11 +67,7 @@ impl MultiSidecarManager {
     }
 
     /// 指定 project_id の sidecar を経由して request を送信する。
-    pub async fn send_request(
-        &self,
-        project_id: &str,
-        req: CodexRequest,
-    ) -> Result<CodexResponse> {
+    pub async fn send_request(&self, project_id: &str, req: CodexRequest) -> Result<CodexResponse> {
         let map = self.sidecars.read().await;
         let sc = map
             .get(project_id)
@@ -78,7 +76,10 @@ impl MultiSidecarManager {
     }
 
     /// notification を購読する。sidecar 未起動なら error。
-    pub async fn subscribe(&self, project_id: &str) -> Result<broadcast::Receiver<CodexNotification>> {
+    pub async fn subscribe(
+        &self,
+        project_id: &str,
+    ) -> Result<broadcast::Receiver<CodexNotification>> {
         let map = self.sidecars.read().await;
         let sc = map
             .get(project_id)
@@ -166,7 +167,10 @@ mod tests {
 
             let req = make_turn_start_request("req-1", &tid, "hi");
             let resp = mgr.send_request(pid, req).await.unwrap();
-            assert!(resp.error.is_none(), "project {pid} turn/start should succeed");
+            assert!(
+                resp.error.is_none(),
+                "project {pid} turn/start should succeed"
+            );
             let r: TurnStartResult = serde_json::from_value(resp.result.unwrap()).unwrap();
             assert_eq!(r.turn.status, "inProgress");
 
@@ -183,7 +187,10 @@ mod tests {
                     _ => break,
                 }
             }
-            assert!(got_completed, "TURN_COMPLETED notification must arrive for {pid}");
+            assert!(
+                got_completed,
+                "TURN_COMPLETED notification must arrive for {pid}"
+            );
         }
 
         // shutdown_all
@@ -229,16 +236,17 @@ mod tests {
         }
         assert_eq!(mgr.list_active().await.len(), MAX_CONCURRENT_SIDECARS);
         // 7 個目は失敗
-        let r = mgr
-            .spawn_for("proj-overflow", SidecarMode::Mock)
-            .await;
+        let r = mgr.spawn_for("proj-overflow", SidecarMode::Mock).await;
         assert!(r.is_err(), "must reject when at limit");
         let msg = format!("{:#}", r.unwrap_err());
         assert!(
             msg.contains("Max concurrent sidecars"),
             "error must mention limit: {msg}"
         );
-        assert!(msg.contains("6"), "error must include constant value 6: {msg}");
+        assert!(
+            msg.contains("6"),
+            "error must include constant value 6: {msg}"
+        );
 
         // 既存 project への重複 spawn は no-op、limit 超過にカウントしない
         mgr.spawn_for("proj-0", SidecarMode::Mock).await.unwrap();
