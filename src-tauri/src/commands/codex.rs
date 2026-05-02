@@ -62,9 +62,7 @@ pub async fn agent_spawn_sidecar<R: Runtime>(
     if !newly_created {
         // 既存 sidecar に対する重複 spawn — pump task は既に走っているので
         // 二重起動を回避するためここで return（DEC-018-039 W1 fix）。
-        tracing::debug!(
-            "agent_spawn_sidecar: existing sidecar for {project_id}, pump task reused"
-        );
+        tracing::debug!("agent_spawn_sidecar: existing sidecar for {project_id}, pump task reused");
         return Ok(());
     }
 

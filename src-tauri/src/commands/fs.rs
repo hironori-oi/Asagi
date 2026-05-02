@@ -67,7 +67,11 @@ pub fn list_dir(args: ListDirArgs) -> Result<Vec<FsEntry>, String> {
         } else {
             "file"
         };
-        let size = if meta.is_file() { Some(meta.len()) } else { None };
+        let size = if meta.is_file() {
+            Some(meta.len())
+        } else {
+            None
+        };
         let path = entry.path().to_string_lossy().to_string();
         out.push(FsEntry {
             name,
