@@ -45,14 +45,7 @@
   },
   "plugins": {
     "shell": {
-      "open": true,
-      "scope": [
-        {
-          "name": "codex",
-          "cmd": "codex",
-          "args": true
-        }
-      ]
+      "open": true
     }
   }
 }
