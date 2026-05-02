@@ -8,6 +8,7 @@ import { useUiStore, type SidebarTab } from '@/lib/stores/ui';
 import { cn } from '@/lib/utils';
 import { SessionsTab } from './sessions-tab';
 import { FilesTab } from './files-tab';
+import { RulesTab } from './rules-tab';
 import { RuntimeTab } from './runtime-tab';
 
 /**
@@ -31,8 +32,8 @@ import { RuntimeTab } from './runtime-tab';
  *   - 各 `<button role="tab">` に `whitespace-nowrap` 適用、icon `h-3 w-3` + padding `px-1.5`
  *     で 4 タブ全件 1 行表示を物理保証（最長 4 字「セッション」も収まる）
  *
- * RulesTab は AS-UX-11.3 commit で実装。本 commit (11.2) では panel 分岐に
- * `null` を入れて 4 タブ枠だけ整備する。
+ * RulesTab は AS-UX-11.3 で実装、CLAUDE.md / AGENTS.md / CODEX.md の検出表示
+ * を担う（DEC-018-008 = 兄弟プロダクトとの実装共有禁止に従い Asagi 独自実装）。
  */
 const TABS: ReadonlyArray<{
   id: SidebarTab;
@@ -164,8 +165,7 @@ export function Sidebar() {
         >
           {activeTab === 'sessions' ? <SessionsTab /> : null}
           {activeTab === 'files' ? <FilesTab /> : null}
-          {/* Rules タブの中身は AS-UX-11.3 commit で <RulesTab /> として実装 */}
-          {activeTab === 'rules' ? null : null}
+          {activeTab === 'rules' ? <RulesTab /> : null}
           {activeTab === 'runtime' ? <RuntimeTab /> : null}
         </div>
       ) : null}
