@@ -25,6 +25,7 @@ use async_trait::async_trait;
 use std::str::FromStr;
 use tokio::sync::broadcast;
 
+pub mod auth;
 pub mod auth_watchdog;
 pub mod bin_resolver;
 pub mod contract;

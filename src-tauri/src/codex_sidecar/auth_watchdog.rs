@@ -187,10 +187,7 @@ impl AuthWatchdog {
     }
 
     /// Tauri AppHandle 1 引数の便利コンストラクタ (production パス)。
-    pub fn with_tauri<R: Runtime>(
-        multi: Arc<MultiSidecarManager>,
-        app: AppHandle<R>,
-    ) -> Self {
+    pub fn with_tauri<R: Runtime>(multi: Arc<MultiSidecarManager>, app: AppHandle<R>) -> Self {
         Self::new(multi, Arc::new(TauriEmitter::new(app)))
     }
 
@@ -239,9 +236,8 @@ impl AuthWatchdog {
                             if r.requires_openai_auth {
                                 AuthState::RequiresReauth {
                                     detected_at_unix: to_unix_seconds(SystemTime::now()),
-                                    reason:
-                                        "account/read returned requires_openai_auth=true"
-                                            .into(),
+                                    reason: "account/read returned requires_openai_auth=true"
+                                        .into(),
                                 }
                             } else {
                                 let plan = r
@@ -413,7 +409,10 @@ mod tests {
         clear_mock_envs();
 
         let multi = Arc::new(MultiSidecarManager::new());
-        multi.spawn_for("p-auth-1", SidecarMode::Mock).await.unwrap();
+        multi
+            .spawn_for("p-auth-1", SidecarMode::Mock)
+            .await
+            .unwrap();
 
         let (cap, emitter) = make_emitter();
         let states = Arc::new(RwLock::new(HashMap::new()));
@@ -424,7 +423,10 @@ mod tests {
         match s {
             AuthState::Authenticated { plan, user, .. } => {
                 assert_eq!(plan, "mock-pro-5x");
-                assert!(user.contains("mock-user"), "user should be mock-user: {user}");
+                assert!(
+                    user.contains("mock-user"),
+                    "user should be mock-user: {user}"
+                );
             }
             other => panic!("expected Authenticated, got {other:?}"),
         }
@@ -443,7 +445,10 @@ mod tests {
         clear_mock_envs();
 
         let multi = Arc::new(MultiSidecarManager::new());
-        multi.spawn_for("p-auth-2", SidecarMode::Mock).await.unwrap();
+        multi
+            .spawn_for("p-auth-2", SidecarMode::Mock)
+            .await
+            .unwrap();
         let (cap, emitter) = make_emitter();
         let states = Arc::new(RwLock::new(HashMap::new()));
 
@@ -479,7 +484,10 @@ mod tests {
         clear_mock_envs();
 
         let multi = Arc::new(MultiSidecarManager::new());
-        multi.spawn_for("p-auth-3", SidecarMode::Mock).await.unwrap();
+        multi
+            .spawn_for("p-auth-3", SidecarMode::Mock)
+            .await
+            .unwrap();
         let (_cap, emitter) = make_emitter();
 
         let watchdog = AuthWatchdog::new(multi.clone(), emitter);
@@ -552,10 +560,7 @@ mod tests {
         time::sleep(Duration::from_millis(400)).await;
         w.stop();
         let events = cap.events.lock().unwrap();
-        assert!(
-            !events.is_empty(),
-            "must emit at least once during loop"
-        );
+        assert!(!events.is_empty(), "must emit at least once during loop");
         // 初回は unknown → authenticated の 1 件、その後 authenticated → authenticated は
         // tag 同一なので emit されないことを確認 (Authenticated は idempotent)
         assert_eq!(events[0].1.from, "unknown");
