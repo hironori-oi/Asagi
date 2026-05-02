@@ -112,7 +112,7 @@
     "tabs": {
       "sessions": "Sessions",
       "files": "Files",
-      "runtime": "Runtime"
+      "runtime": "Run"
     },
     "newSession": "New session",
     "empty": "No sessions yet. Press 'New session' to start.",

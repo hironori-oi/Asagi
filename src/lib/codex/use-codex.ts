@@ -78,6 +78,14 @@ export function useCodex(projectId: string): UseCodexResult {
   const currentTurnIdRef = useRef<string | null>(null);
 
   // event 購読
+  //
+  // AS-UX-FIX-A / DEC-018-039 W1: React StrictMode (dev) は useEffect を
+  // 意図的に 2 回 mount/unmount する。on() は async なので、
+  // cleanup が「await on(...) が解決する前」に走ると unsub 関数が
+  // 失われ、listener が DOM 上に残留 → 同 event を 2 回処理して
+  // 文字重複の症状を補強する原因になる。
+  // 対策: cancelled フラグを await 解決後に再チェックし、
+  // 既に cleanup 済みなら受け取った unsub 関数を即座に呼び出して破棄する。
   useEffect(() => {
     let unsubDelta: (() => void) | null = null;
     let unsubCompleted: (() => void) | null = null;
@@ -85,7 +93,7 @@ export function useCodex(projectId: string): UseCodexResult {
 
     (async () => {
       try {
-        unsubDelta = await on<unknown>(
+        const ud = await on<unknown>(
           AgentEvents.itemAgentMessageDelta(projectId),
           (e) => {
             const p = validateItemAgentMessageDeltaParams(e.payload);
@@ -117,7 +125,14 @@ export function useCodex(projectId: string): UseCodexResult {
             });
           },
         );
-        unsubCompleted = await on<unknown>(
+        // race 防御: await 中に cleanup が走っていたら即破棄
+        if (cancelled) {
+          ud();
+        } else {
+          unsubDelta = ud;
+        }
+
+        const uc = await on<unknown>(
           AgentEvents.turnCompleted(projectId),
           (e) => {
             const p = validateTurnCompletedParams(e.payload);
@@ -136,6 +151,11 @@ export function useCodex(projectId: string): UseCodexResult {
             currentTurnIdRef.current = null;
           },
         );
+        if (cancelled) {
+          uc();
+        } else {
+          unsubCompleted = uc;
+        }
       } catch (err) {
         if (!cancelled) {
           setError(`event subscribe failed: ${String(err)}`);

@@ -37,6 +37,15 @@ use crate::AppState;
 /// 起動時は env (`ASAGI_SIDECAR_MODE`) で初期化されるが、UI から
 /// `agent_set_sidecar_mode` で切替された後は最新値が使われる
 /// （既存 sidecar は再 spawn まで現行モード継続、additive 切替）。
+///
+/// AS-UX-FIX-A / DEC-018-039 W1: notification → Tauri Event 転送 pump task は
+/// `spawn_for` が **新規生成 (Ok(true))** を返したときのみ起動する。
+/// React StrictMode 下では `useEffect` が dev で 2 回 mount されるため、
+/// `void codex.spawn()` も 2 回呼ばれる。以前は spawn_for が冪等 no-op で
+/// あっても無条件に pump task を生成していたため、同一 broadcast::Sender に
+/// 2 つの subscriber 経路ができ、1 つの `item/agentMessage/delta` 通知が
+/// 2 回 emit されて UI 側で各 token が二重表示される深刻なバグが発生していた。
+/// （症状: `mockmock app app-ser-server ver` のような interleaved duplication。）
 #[tauri::command]
 pub async fn agent_spawn_sidecar<R: Runtime>(
     app: AppHandle<R>,
@@ -44,13 +53,22 @@ pub async fn agent_spawn_sidecar<R: Runtime>(
     project_id: String,
 ) -> Result<(), String> {
     let mode = *state.current_sidecar_mode.read().await;
-    state
+    let newly_created = state
         .multi
         .spawn_for(project_id.clone(), mode)
         .await
         .map_err(|e| format!("spawn_for failed: {e:#}"))?;
 
-    // notification を Tauri Event に転送する pump task を起動
+    if !newly_created {
+        // 既存 sidecar に対する重複 spawn — pump task は既に走っているので
+        // 二重起動を回避するためここで return（DEC-018-039 W1 fix）。
+        tracing::debug!(
+            "agent_spawn_sidecar: existing sidecar for {project_id}, pump task reused"
+        );
+        return Ok(());
+    }
+
+    // notification を Tauri Event に転送する pump task を起動（新規 sidecar に 1 個だけ）
     let multi = state.multi.clone();
     let pid = project_id.clone();
     let app_handle = app.clone();

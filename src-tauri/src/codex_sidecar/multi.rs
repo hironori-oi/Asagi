@@ -48,11 +48,24 @@ impl MultiSidecarManager {
     /// 既に存在する場合は何もしない (冪等)。
     /// 既存数が `MAX_CONCURRENT_SIDECARS` を満たしている状態で
     /// **新規** project への spawn が来た場合は error を返す (DEC-018-025)。
-    pub async fn spawn_for(&self, project_id: impl Into<String>, mode: SidecarMode) -> Result<()> {
+    ///
+    /// 返り値:
+    ///   - `Ok(true)`  = 新規に sidecar を生成・start した（呼び出し側は
+    ///     notification pump task など 1 回限りの後処理を実行してよい）
+    ///   - `Ok(false)` = 既存 sidecar があったため no-op（後処理スキップ）
+    ///
+    /// この区別は AS-UX-FIX-A (DEC-018-039 W1) で発覚した、
+    /// 「冪等 spawn 呼び出しのたびに pump task が二重起動 → 1 delta が
+    /// 複数 Tauri event として emit される」バグの修正に使用される。
+    pub async fn spawn_for(
+        &self,
+        project_id: impl Into<String>,
+        mode: SidecarMode,
+    ) -> Result<bool> {
         let pid = project_id.into();
         let mut map = self.sidecars.write().await;
         if map.contains_key(&pid) {
-            return Ok(());
+            return Ok(false);
         }
         if map.len() >= MAX_CONCURRENT_SIDECARS {
             bail!(
@@ -63,7 +76,7 @@ impl MultiSidecarManager {
         let mut sc = create_sidecar(mode, pid.clone());
         sc.start().await?;
         map.insert(pid, sc);
-        Ok(())
+        Ok(true)
     }
 
     /// 指定 project_id の sidecar を経由して request を送信する。
@@ -204,8 +217,12 @@ mod tests {
     #[tokio::test]
     async fn spawn_is_idempotent() {
         let mgr = MultiSidecarManager::new();
-        mgr.spawn_for("p1", SidecarMode::Mock).await.unwrap();
-        mgr.spawn_for("p1", SidecarMode::Mock).await.unwrap();
+        // 1 回目は新規 → true
+        let first = mgr.spawn_for("p1", SidecarMode::Mock).await.unwrap();
+        assert!(first, "first spawn must report newly-created");
+        // 2 回目は冪等 no-op → false
+        let second = mgr.spawn_for("p1", SidecarMode::Mock).await.unwrap();
+        assert!(!second, "duplicate spawn must report no-op (false)");
         assert_eq!(mgr.list_active().await.len(), 1);
     }
 
