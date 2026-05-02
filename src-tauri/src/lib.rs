@@ -125,6 +125,8 @@ pub fn run() {
             commands::get_setting,
             commands::set_setting,
             commands::list_settings,
+            // AS-142: clipboard image paste → data URL
+            commands::paste_clipboard_image,
             // AS-134 Multi-Sidecar commands
             commands::codex::agent_spawn_sidecar,
             commands::codex::agent_send_message_v2,

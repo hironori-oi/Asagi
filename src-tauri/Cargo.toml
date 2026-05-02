@@ -47,7 +47,7 @@ keyring = "2.3"
 
 # Clipboard / image
 arboard = "3.6"
-image = { version = "0.25", default-features = false, features = ["png", "bmp"] }
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg"] }
 
 # File watch (auth.json mtime watch 用、POC 通過後)
 notify = "6.1"

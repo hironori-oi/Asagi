@@ -81,10 +81,7 @@ pub fn get_session(
 }
 
 #[tauri::command]
-pub fn delete_session(
-    state: tauri::State<AppState>,
-    args: SessionIdArgs,
-) -> Result<(), String> {
+pub fn delete_session(state: tauri::State<AppState>, args: SessionIdArgs) -> Result<(), String> {
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("database not initialized")?;
     session::delete(conn, &args.id).map_err(|e| format!("{e:#}"))
@@ -108,8 +105,7 @@ pub fn create_message(
 ) -> Result<String, String> {
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("database not initialized")?;
-    message::create(conn, &args.session_id, &args.role, &args.content)
-        .map_err(|e| format!("{e:#}"))
+    message::create(conn, &args.session_id, &args.role, &args.content).map_err(|e| format!("{e:#}"))
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,7 +205,10 @@ pub async fn agent_send_message(
         .await
         .map_err(|e| format!("thread/start failed: {e:#}"))?;
     if let Some(err) = resp.error {
-        return Err(format!("thread/start error: {} ({})", err.message, err.code));
+        return Err(format!(
+            "thread/start error: {} ({})",
+            err.message, err.code
+        ));
     }
     let r: ThreadStartResult = serde_json::from_value(resp.result.ok_or("empty")?)
         .map_err(|e| format!("decode thread/start: {e}"))?;
@@ -387,4 +386,23 @@ pub fn list_settings<R: Runtime>(app: AppHandle<R>) -> Result<HashMap<String, Js
         out.insert(k, v);
     }
     Ok(out)
+}
+
+// ---------------------------------------------------------------------
+// AS-142: image paste 経路 (DEC-018-033 ② / PM § 2.3 DoD ⑧)
+// ---------------------------------------------------------------------
+
+/// クリップボード画像を取得し、`turn/start` input 配列に push 可能な
+/// `{type:"image", url:"data:image/png;base64,..."}` JSON 部品を返す。
+///
+/// schema 文字列は `crate::codex_sidecar::contract::IMAGE_INPUT_TYPE` /
+/// `IMAGE_URL_FIELD` から import される (ハードコード禁止 / DEC-018-034)。
+///
+/// # 戻り値
+///   - `Ok(JsonValue)` ... `{type, url}` の JSON object
+///   - `Err(String)` ... NoImage / Empty / Unsupported / ClipboardError 等の
+///                       human-readable メッセージ (frontend が toast 表示する想定)
+#[tauri::command]
+pub fn paste_clipboard_image() -> Result<JsonValue, String> {
+    crate::image_paste::paste_clipboard_image_as_input_part().map_err(|e| e.to_string())
 }
