@@ -156,10 +156,9 @@
   --titlebar-height:    36px;
   --statusbar-height:   28px;
   --projectrail-width:  48px;
-  --sidebar-width:      240px;
+  --sidebar-width:      256px;
   --sidebar-min:        200px;
   --sidebar-max:        360px;
-  --inspector-width:    320px;
 
   /* Radii */
   --radius-xs:    2px;

@@ -112,6 +112,7 @@
     "tabs": {
       "sessions": "セッション",
       "files": "ファイル",
+      "rules": "ルール",
       "runtime": "実行"
     },
     "newSession": "新規セッション",
@@ -124,6 +125,14 @@
       "refresh": "再読込",
       "empty": "このディレクトリは空です",
       "loadFailed": "ディレクトリの読込に失敗しました"
+    },
+    "rulesTab": {
+      "title": "ルール",
+      "subtitle": "プロジェクト規約ファイル",
+      "refresh": "再読込",
+      "notFound": "未検出",
+      "loadFailed": "ルールファイルの検出に失敗しました",
+      "empty": "プロジェクトルートに規約ファイルがありません"
     },
     "runtimeTab": {
       "title": "実行状態",

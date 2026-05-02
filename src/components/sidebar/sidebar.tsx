@@ -3,7 +3,7 @@
 import { useId, useRef, type KeyboardEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
-import { MessageSquare, Folder, Activity } from 'lucide-react';
+import { MessageSquare, Folder, BookOpen, Activity } from 'lucide-react';
 import { useUiStore, type SidebarTab } from '@/lib/stores/ui';
 import { cn } from '@/lib/utils';
 import { SessionsTab } from './sessions-tab';
@@ -11,13 +11,13 @@ import { FilesTab } from './files-tab';
 import { RuntimeTab } from './runtime-tab';
 
 /**
- * Sidebar — AS-UX-05 / DEC-018-037 §① 5-tab 化 第 1 弾。
+ * Sidebar — AS-UX-05 / AS-UX-11 / DEC-018-040 4-tab 化（Sessions/Files/Rules/Runtime）。
  *
- * Sumi DEC-082 翻訳。
- * 上部に WAI-ARIA tablist（Sessions / Files / Runtime の 3 タブ）を配置し、
- * 各タブの中身を `<SessionsTab />` / `<FilesTab />` / `<RuntimeTab />` に切替表示する。
+ * Sumi DEC-082 翻訳 + Sumi v3.5.3 の右 Inspector 撤去パターン継承。
+ * 上部に WAI-ARIA tablist を配置し、各タブの中身を
+ * `<SessionsTab />` / `<FilesTab />` / `<RulesTab />` / `<RuntimeTab />` に切替表示する。
  *
- * - 折り畳み: `useUiStore.sidebarCollapsed` (Cmd+B でトグル) で 240px <-> 48px
+ * - 折り畳み: `useUiStore.sidebarCollapsed` (Cmd+B でトグル) で 256px <-> 48px
  * - active tab persist: `useUiStore.sidebarActiveTab` を localStorage 永続化
  * - underline indicator: framer-motion `layoutId="sidebar-tab-indicator"` で滑らか移動
  *
@@ -26,7 +26,13 @@ import { RuntimeTab } from './runtime-tab';
  *   - Home / End で最初 / 最後の tab
  *   - Tab で tabpanel 内のフォーカスへ
  *
- * 残 2 タブ (Servers / Rules) は M1.1 (AS-UX-07/08 完了後) 評価。
+ * width / nowrap 仕様 (DEC-018-040 ④, Bug B 解消の核心):
+ *   - Sidebar 親 `w-64` (256px) 固定 — Wave 1 の `w-60` (240px) + 3 タブ折返しを根本解消
+ *   - 各 `<button role="tab">` に `whitespace-nowrap` 適用、icon `h-3 w-3` + padding `px-1.5`
+ *     で 4 タブ全件 1 行表示を物理保証（最長 4 字「セッション」も収まる）
+ *
+ * RulesTab は AS-UX-11.3 commit で実装。本 commit (11.2) では panel 分岐に
+ * `null` を入れて 4 タブ枠だけ整備する。
  */
 const TABS: ReadonlyArray<{
   id: SidebarTab;
@@ -35,6 +41,7 @@ const TABS: ReadonlyArray<{
 }> = [
   { id: 'sessions', i18nKey: 'tabs.sessions', icon: MessageSquare },
   { id: 'files', i18nKey: 'tabs.files', icon: Folder },
+  { id: 'rules', i18nKey: 'tabs.rules', icon: BookOpen },
   { id: 'runtime', i18nKey: 'tabs.runtime', icon: Activity },
 ] as const;
 
@@ -47,6 +54,7 @@ export function Sidebar() {
   const tabRefs = useRef<Record<SidebarTab, HTMLButtonElement | null>>({
     sessions: null,
     files: null,
+    rules: null,
     runtime: null,
   });
 
@@ -74,7 +82,7 @@ export function Sidebar() {
       className={cn(
         'hidden shrink-0 flex-col border-r border-border bg-surface md:flex',
         'transition-[width] duration-base ease-out-expo',
-        collapsed ? 'w-12' : 'w-60',
+        collapsed ? 'w-12' : 'w-64',
       )}
     >
       <div
@@ -107,7 +115,7 @@ export function Sidebar() {
               data-testid={`sidebar-tab-${tab.id}`}
               title={t(tab.i18nKey)}
               className={cn(
-                'relative flex items-center justify-center gap-1.5 text-xs',
+                'relative flex items-center justify-center gap-1 whitespace-nowrap text-xs',
                 'transition-colors duration-fast ease-out-expo',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                 collapsed
@@ -118,14 +126,14 @@ export function Sidebar() {
                         : 'text-muted-foreground hover:bg-surface-elevated hover:text-foreground',
                     )
                   : cn(
-                      'flex-1 px-2',
+                      'flex-1 px-1.5',
                       selected
                         ? 'text-accent'
                         : 'text-muted-foreground hover:bg-surface-elevated hover:text-foreground',
                     ),
               )}
             >
-              <Icon strokeWidth={1.5} className="h-3.5 w-3.5" />
+              <Icon strokeWidth={1.5} className="h-3 w-3" />
               {!collapsed ? <span>{t(tab.i18nKey)}</span> : null}
               {selected ? (
                 <motion.span
@@ -136,7 +144,7 @@ export function Sidebar() {
                     'absolute bg-accent',
                     collapsed
                       ? 'left-0 top-1/2 h-5 w-[2px] -translate-y-1/2 rounded-r'
-                      : 'bottom-0 left-2 right-2 h-[2px] rounded-t',
+                      : 'bottom-0 left-1.5 right-1.5 h-[2px] rounded-t',
                   )}
                 />
               ) : null}
@@ -156,6 +164,8 @@ export function Sidebar() {
         >
           {activeTab === 'sessions' ? <SessionsTab /> : null}
           {activeTab === 'files' ? <FilesTab /> : null}
+          {/* Rules タブの中身は AS-UX-11.3 commit で <RulesTab /> として実装 */}
+          {activeTab === 'rules' ? null : null}
           {activeTab === 'runtime' ? <RuntimeTab /> : null}
         </div>
       ) : null}

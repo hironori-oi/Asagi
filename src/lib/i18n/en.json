@@ -112,6 +112,7 @@
     "tabs": {
       "sessions": "Sessions",
       "files": "Files",
+      "rules": "Rules",
       "runtime": "Run"
     },
     "newSession": "New session",
@@ -124,6 +125,14 @@
       "refresh": "Refresh",
       "empty": "This directory is empty",
       "loadFailed": "Failed to read the directory"
+    },
+    "rulesTab": {
+      "title": "Rules",
+      "subtitle": "Project rule files",
+      "refresh": "Refresh",
+      "notFound": "Not found",
+      "loadFailed": "Failed to detect rule files",
+      "empty": "No rule files at the project root"
     },
     "runtimeTab": {
       "title": "Runtime",
