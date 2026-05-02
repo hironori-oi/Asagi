@@ -28,3 +28,72 @@
     -webkit-user-select: text;
   }
 }
+
+/* --------------------------------------------------------------------
+ * Asagi typing indicator — 滴の波紋 (Drop Ripple)
+ * --------------------------------------------------------------------
+ * DEC-018-026 ① A 磨き込み（趣 5 原則適用）。
+ *
+ * γ ロゴ「浅葱滴」のメタファー継承。3 つの粒が「現れ → ふくらみ → 消える」
+ * 一周期を 1.6s で巡る。粒同士の遅延を素数比 (0 / 240 / 470ms) で外し、
+ * 機械的な等間隔ループ感を消す（不完全美 + 即興性）。
+ *
+ * 趣 5 原則の適用:
+ *   ① 不完全美: 遅延を等間隔 (160ms) でなく素数比 (240ms / 470ms) でズラす
+ *   ② 余白:     粒 4px × 3 + gap 8px、bubble の周囲に呼吸する余裕
+ *   ③ 即興性:   asymmetric easing で「現れ」と「消え」の速度を変える
+ *   ④ 経年変化: opacity が 0.30 → 0.85 → 0.40 で「灯って消える」呼吸
+ *   ⑤ 静謐:    accent (asagi-500) を 65% 透明、scale 最大 1.0 で抑制
+ * -------------------------------------------------------------------- */
+@keyframes asagi-drop-ripple {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.30;
+  }
+  35% {
+    transform: scale(1.0);
+    opacity: 0.85;
+  }
+  65% {
+    transform: scale(0.85);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(0.55);
+    opacity: 0.30;
+  }
+}
+
+.asagi-drop {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background-color: var(--accent);
+  /* 透明度を初期に控えめに置くことで static fallback でも目立ちすぎない（静謐） */
+  opacity: 0.40;
+  /* 1.6s + asymmetric easing。ease-out 寄りで「灯る」が早く、「消える」が緩やか */
+  animation: asagi-drop-ripple 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  /* GPU compositing hint。WebView での jank 抑制 */
+  will-change: transform, opacity;
+}
+
+/* 遅延を素数比 (0 / 240 / 470ms) で配置 — 機械的等間隔 (160ms) を意図的に外す */
+.asagi-drop:nth-child(1) {
+  animation-delay: 0ms;
+}
+.asagi-drop:nth-child(2) {
+  animation-delay: 240ms;
+}
+.asagi-drop:nth-child(3) {
+  animation-delay: 470ms;
+}
+
+/* prefers-reduced-motion: アニメ無効化、静的 dot 1 個相当として表示維持 */
+@media (prefers-reduced-motion: reduce) {
+  .asagi-drop {
+    animation: none;
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+}
