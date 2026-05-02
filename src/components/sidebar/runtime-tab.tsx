@@ -8,7 +8,7 @@ import { invoke } from '@/lib/tauri/invoke';
 import { cn } from '@/lib/utils';
 
 /**
- * 実行状態 (Runtime) タブ（AS-UX-05 / DEC-018-037 §①）。
+ * 実行状態 (Runtime) タブ（AS-UX-05 / DEC-018-037 §① / AS-UX-11.4 / DEC-018-040 ⑦）。
  *
  * v0.1.0 段階の表示要素:
  *   - SubAgents 相当: agent_list_sidecars の結果（active sidecar 一覧）
@@ -17,6 +17,15 @@ import { cn } from '@/lib/utils';
  *
  * 詳細な MultiSidecar 制御 UI は M2 AS-220 で本実装する。本タブは「現に動いている
  * sidecar が一目で見える」ことだけを目的とした最小実装。
+ *
+ * AS-UX-11.4 (Inspector 撤去) の責務統合:
+ *   - 旧 Inspector の subAgents tab placeholder（M2 AS-220 以降）→ 本タブ subAgents
+ *     セクションが既に同等の placeholder（noSubAgents + sidecar 一覧）を提供
+ *   - 旧 Inspector の todos tab placeholder（M2 以降）→ 本タブ Todos セクションの
+ *     todosM2 文言で同等表現
+ *   - Inspector の context tab は Rules タブ (AS-UX-11.3) に分離
+ *   - full-height flex 化: 既存の `flex h-full min-h-0 flex-col` 構造で tabpanel
+ *     全高 scroll 動作する
  */
 interface QuotaInfo {
   used: number;
