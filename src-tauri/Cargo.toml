@@ -44,7 +44,12 @@ sha2 = "0.10"
 base64 = "0.22"
 
 # SQLite (bundled で同梱、FTS5 有効)
-rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+# AS-CLEAN-09 (DEC-018-042): rusqlite 0.32 は `fts5` 単独 feature 不在のため `bundled-full` を採用。
+# `bundled` のみでは libsqlite3-sys 既定の compile flag に SQLITE_ENABLE_FTS5 が含まれず、
+# db.rs:32 の `SELECT fts5_version();` が "no such function" で起動失敗 → notification stream 切断 → chat エラー連鎖。
+# `bundled-full` は modern-full (array/backup/blob/chrono/collation/csvtab/functions/hooks/series/time/uuid/vtab/window 等)
+# + bundled の集合体で FTS5 含む全 SQLite 拡張を一括有効化。バイナリ増 ~300-500KB 想定（実用上無視可能）。
+rusqlite = { version = "0.32", features = ["bundled-full"] }
 
 # Keyring (POC 通過後に本格利用、現状は依存追加のみ)
 keyring = "2.3"
