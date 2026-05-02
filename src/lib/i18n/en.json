@@ -180,26 +180,6 @@
       "tooltipReal": "Real mode (Codex CLI connected)"
     }
   },
-  "inspector": {
-    "title": "Inspector",
-    "tabs": {
-      "context": "Context",
-      "subAgents": "SubAgents",
-      "todos": "Todos"
-    },
-    "context": {
-      "title": "Project context",
-      "body": "List of context files such as CLAUDE.md / AGENTS.md / CODEX.md (real impl in M3 AS-301)."
-    },
-    "subAgents": {
-      "title": "Sub-agents",
-      "body": "Codex sub-agent invocation history (M2 AS-220 and later)."
-    },
-    "todos": {
-      "title": "Todos",
-      "body": "TODOs extracted by Codex (M2 onward)."
-    }
-  },
   "command": {
     "placeholder": "Search commands…",
     "empty": "No matching commands",

@@ -180,26 +180,6 @@
       "tooltipReal": "Real モード（Codex CLI 接続）"
     }
   },
-  "inspector": {
-    "title": "Inspector",
-    "tabs": {
-      "context": "コンテキスト",
-      "subAgents": "SubAgents",
-      "todos": "Todos"
-    },
-    "context": {
-      "title": "プロジェクトコンテキスト",
-      "body": "CLAUDE.md / AGENTS.md / CODEX.md などのコンテキストファイル一覧（M3 AS-301 で本実装）。"
-    },
-    "subAgents": {
-      "title": "サブエージェント",
-      "body": "Codex のサブエージェント呼出履歴（M2 AS-220 以降）。"
-    },
-    "todos": {
-      "title": "Todos",
-      "body": "Codex が抽出した TODO 一覧（M2 以降）。"
-    }
-  },
   "command": {
     "placeholder": "コマンドまたは検索…",
     "empty": "該当するコマンドがありません",
