@@ -13,6 +13,8 @@ export const KEYBINDINGS = {
   newSession: 'mod+n',
   /** Ctrl/Cmd + / — ヘルプモーダル（キーバインド一覧） */
   showHelp: 'mod+/',
+  /** Ctrl/Cmd + B — Sidebar 折り畳みトグル（AS-UX-05、Sumi DEC-082 翻訳） */
+  toggleSidebar: 'mod+b',
   /** Escape — モーダル / ポップオーバを閉じる */
   escape: 'esc',
 } as const;

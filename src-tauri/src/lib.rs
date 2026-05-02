@@ -153,6 +153,8 @@ pub fn run() {
             commands::codex::auth_watchdog_stop,
             commands::codex::auth_watchdog_force_check,
             commands::codex::auth_watchdog_get_state,
+            // AS-UX-05: Sidebar Files tab shallow tree
+            commands::fs::list_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Asagi application");

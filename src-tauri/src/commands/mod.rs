@@ -18,6 +18,8 @@ use tauri_plugin_store::StoreExt;
 // `tauri::generate_handler!` macro は `pub use` 経由の re-export を
 // 解決できないため、lib.rs では `commands::codex::xxx` で参照する。
 pub mod codex;
+// AS-UX-05: shallow filesystem listing for Sidebar Files tab
+pub mod fs;
 
 /// SQLite 初期化を再実行する（debug 用）。
 #[tauri::command]

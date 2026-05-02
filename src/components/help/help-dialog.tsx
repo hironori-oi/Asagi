@@ -88,6 +88,7 @@ export function HelpDialog() {
               <Row label={tShortcuts('newSession')} keys={KEYBINDINGS.newSession} />
               <Row label={tShortcuts('toggleTheme')} keys={KEYBINDINGS.toggleTheme} />
               <Row label={tShortcuts('showHelp')} keys={KEYBINDINGS.showHelp} />
+              <Row label={tShortcuts('toggleSidebar')} keys={KEYBINDINGS.toggleSidebar} />
               <Row label={tShortcuts('escape')} keys={KEYBINDINGS.escape} />
               <RowLiteral label={tShortcuts('submit')} display="Enter" icon={CornerDownLeft} />
               <RowLiteral label={tShortcuts('newline')} display="Shift + Enter" />

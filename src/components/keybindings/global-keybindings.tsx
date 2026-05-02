@@ -22,6 +22,7 @@ export function GlobalKeybindings() {
   const toggleCommandPalette = useUiStore((s) => s.toggleCommandPalette);
   const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
   const toggleHelp = useUiStore((s) => s.toggleHelp);
+  const toggleSidebarCollapsed = useUiStore((s) => s.toggleSidebarCollapsed);
   const { setTheme, resolvedTheme } = useTheme();
   const tToast = useTranslations('toast');
   const tThemeOptions = useTranslations('settings.theme.options');
@@ -78,6 +79,17 @@ export function GlobalKeybindings() {
       handleNewSession();
     },
     { enableOnFormTags: false }
+  );
+
+  // Sidebar 折り畳み (AS-UX-05, Sumi DEC-082 翻訳): textarea 内でも発火させる
+  // (Cmd+B の Bold 衝突を回避: Asagi に rich text 編集は無いため安全)。
+  useHotkeys(
+    KEYBINDINGS.toggleSidebar,
+    (e) => {
+      e.preventDefault();
+      toggleSidebarCollapsed();
+    },
+    { enableOnFormTags: true, enableOnContentEditable: true }
   );
 
   return null;

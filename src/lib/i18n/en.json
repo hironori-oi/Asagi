@@ -102,11 +102,32 @@
   },
   "sidebar": {
     "title": "Sessions",
+    "tablistLabel": "Sidebar tabs",
+    "tabs": {
+      "sessions": "Sessions",
+      "files": "Files",
+      "runtime": "Runtime"
+    },
     "newSession": "New session",
     "empty": "No sessions yet. Press 'New session' to start.",
     "loadFailed": "Failed to load sessions (DB unavailable)",
     "messageCount": "{count} msg",
-    "untitled": "Untitled session"
+    "untitled": "Untitled session",
+    "filesTab": {
+      "title": "Files",
+      "refresh": "Refresh",
+      "empty": "This directory is empty",
+      "loadFailed": "Failed to read the directory"
+    },
+    "runtimeTab": {
+      "title": "Runtime",
+      "subAgents": "Sub-agents",
+      "noSubAgents": "No active sidecars",
+      "quota": "Plan quota",
+      "quotaUnknown": "Plan quota unknown",
+      "todos": "Todos",
+      "todosM2": "M2 will list Codex-extracted TODOs here"
+    }
   },
   "chat": {
     "empty": {
@@ -262,6 +283,7 @@
       "newSession": "New session",
       "toggleTheme": "Toggle theme",
       "showHelp": "Show this help",
+      "toggleSidebar": "Toggle sidebar collapse",
       "submit": "Send message (input)",
       "newline": "Newline (input)",
       "escape": "Close modal / popover"

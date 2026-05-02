@@ -7,6 +7,7 @@ describe('KEYBINDINGS', () => {
     expect(KEYBINDINGS.toggleTheme).toBe('mod+t');
     expect(KEYBINDINGS.newSession).toBe('mod+n');
     expect(KEYBINDINGS.showHelp).toBe('mod+/');
+    expect(KEYBINDINGS.toggleSidebar).toBe('mod+b');
   });
 });
 

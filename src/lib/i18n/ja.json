@@ -102,11 +102,32 @@
   },
   "sidebar": {
     "title": "セッション",
+    "tablistLabel": "サイドバー切替",
+    "tabs": {
+      "sessions": "セッション",
+      "files": "ファイル",
+      "runtime": "実行状態"
+    },
     "newSession": "新規セッション",
     "empty": "セッションがありません。「新規セッション」を押して開始してください。",
     "loadFailed": "セッション一覧の取得に失敗しました（DB 未接続）",
     "messageCount": "{count} 件",
-    "untitled": "無題のセッション"
+    "untitled": "無題のセッション",
+    "filesTab": {
+      "title": "ファイル",
+      "refresh": "再読込",
+      "empty": "このディレクトリは空です",
+      "loadFailed": "ディレクトリの読込に失敗しました"
+    },
+    "runtimeTab": {
+      "title": "実行状態",
+      "subAgents": "サブエージェント",
+      "noSubAgents": "現在 active な sidecar はありません",
+      "quota": "プラン残枠",
+      "quotaUnknown": "プラン残枠は未取得",
+      "todos": "Todos",
+      "todosM2": "M2 で Codex 抽出 TODO 一覧を表示します"
+    }
   },
   "chat": {
     "empty": {
@@ -262,6 +283,7 @@
       "newSession": "新規セッション",
       "toggleTheme": "テーマを切替",
       "showHelp": "このヘルプを表示",
+      "toggleSidebar": "サイドバー折り畳みトグル",
       "submit": "メッセージ送信（入力欄）",
       "newline": "改行（入力欄）",
       "escape": "モーダル / ポップオーバを閉じる"
