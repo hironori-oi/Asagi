@@ -67,6 +67,19 @@ test.describe(`${REAL_SMOKE_TAG} AS-145 — Real Codex sidecar E2E`, () => {
 
   // ------------------------------------------------------------------
   // 1) AS-145.2 — Real handshake + agentMessage 表示
+  //
+  // 手動 smoke 手順 (R-E2E-1 fallback 時, Tauri 実機ウィンドウ):
+  //   1. PowerShell で
+  //        $env:ASAGI_SIDECAR_MODE='real'
+  //        $env:CODEX_BIN_PATH='C:\Users\hiron\AppData\Roaming\npm\node_modules\
+  //                              @openai\codex\node_modules\@openai\codex-win32-x64\
+  //                              vendor\x86_64-pc-windows-msvc\codex\codex.exe'
+  //   2. cd projects/PRJ-018/app/asagi-app && npm run tauri dev
+  //   3. Welcome を skip (3 step 進行) → ChatPane に「こんにちは」入力
+  //   4. Cmd/Ctrl+Enter で送信、30s 以内に Codex から日本語応答が出ることを確認
+  //   5. StatusBar 右下の sidecar mode badge が `real` を示すことを確認
+  //   6. 結果（応答時間 / 応答内容 / エラー）を reports/dev-as145-smoke-2026-05-03.md
+  //      § 1 Real handshake 表に記録
   // ------------------------------------------------------------------
   test.describe('Real handshake', () => {
     test(`${REAL_SMOKE_TAG} 1 turn chat completes within 30s`, async ({ page }, testInfo) => {
@@ -124,6 +137,17 @@ test.describe(`${REAL_SMOKE_TAG} AS-145 — Real Codex sidecar E2E`, () => {
   // ------------------------------------------------------------------
   // 2) AS-145.3 — Multi-session 切替 + メッセージ独立性
   //    + AS-CLEAN-11 regression check (DB 未接続誤表示なし)
+  //
+  // 手動 smoke 手順:
+  //   1. AS-145.2 続きで session A 状態
+  //   2. Sidebar の Sessions tab に切替（既に active なら省略）
+  //   3. 「+ 新規セッション」ボタンを押下 → session B 着地
+  //   4. session B で「テストB」入力 → 送信 → assistant 応答待機
+  //   5. Sidebar 一覧の最下段（session A）をクリック → A の履歴復元を確認
+  //   6. session A の message-list に「テストB」が含まれない（独立性）
+  //   7. Sessions tab に「DB 未接続」「セッション一覧の取得に失敗」が
+  //      表示されない（AS-CLEAN-11 regression check）
+  //   8. 結果を reports/dev-as145-smoke-2026-05-03.md § 2 に記録
   // ------------------------------------------------------------------
   test.describe('Multi-session 切替', () => {
     test(`${REAL_SMOKE_TAG} A/B switch keeps message isolation`, async ({ page }) => {
@@ -200,6 +224,19 @@ test.describe(`${REAL_SMOKE_TAG} AS-145 — Real Codex sidecar E2E`, () => {
   // ------------------------------------------------------------------
   // 3) AS-145.4 — Settings preflight + auth status
   //    + AS-CLEAN-12 regression check (stub hint 表示なし)
+  //
+  // 手動 smoke 手順:
+  //   1. TitleBar 右上の Settings (歯車) ボタンをクリック → drawer open
+  //   2. Sidecar Mode セクションの `real` ボタンが selected (border-accent) を確認
+  //   3. ChatPane ヘッダ右肩の AuthBadge が緑（authenticated 表示）を確認
+  //   4. ChatPane InputArea 下に `[stub] Codex 統合は POC 通過後に実装` が
+  //      表示されない（AS-CLEAN-12 regression check）
+  //   5. StatusBar 右下の sidecar mode badge が `real` 表示
+  //   6. 結果を reports/dev-as145-smoke-2026-05-03.md § 3 に記録
+  //
+  // 注: M1 完成時点で Settings drawer 内に「preflight」専用セクションは
+  //     未実装（M1.1 backlog）。本 test では sidecar mode picker / AuthBadge /
+  //     stub hint の 3 点で preflight 相当を担保する。
   // ------------------------------------------------------------------
   test.describe('Settings preflight', () => {
     test(`${REAL_SMOKE_TAG} sidecar mode = real + auth ok + no stub hint`, async ({ page }) => {
