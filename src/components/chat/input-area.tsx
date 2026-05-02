@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { Send, Brain, Gauge } from 'lucide-react';
+import { Send, Brain, Gauge, Square } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useProjectStore } from '@/lib/stores/project';
@@ -143,7 +143,9 @@ export function InputArea() {
         );
         return;
       }
-      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      // SlashPalette が開いている時は Enter (without modifier) で実行する。
+      // これは通常のチャット送信規約 (Cmd/Ctrl+Enter) より優先する。
+      if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing) {
         e.preventDefault();
         const target = filtered[slashIndex];
         if (target) runSlash(target.id);
@@ -155,7 +157,8 @@ export function InputArea() {
         return;
       }
     }
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    // DEC-018-026 ① D: Cmd/Ctrl+Enter で送信、素の Enter は改行（macOS 慣用 + Slack/Discord 互換）。
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void send();
     }
@@ -188,6 +191,19 @@ export function InputArea() {
               data-testid="chat-input-textarea"
               className="selectable min-h-[40px] flex-1 resize-none bg-transparent px-2 py-1 text-sm placeholder:text-muted-foreground focus-visible:outline-none"
             />
+            {codexCtx?.isStreaming ? (
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => void codexCtx.interrupt()}
+                aria-label={t('interrupt')}
+                title={t('interrupt')}
+                data-testid="chat-interrupt-button"
+              >
+                <Square strokeWidth={1.5} className="h-4 w-4" />
+              </Button>
+            ) : null}
             <Button
               type="button"
               size="icon"

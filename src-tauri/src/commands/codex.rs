@@ -190,3 +190,56 @@ pub async fn agent_status(
     }
     Ok(resp.result.unwrap_or(JsonValue::Null))
 }
+
+#[derive(Debug, Deserialize)]
+pub struct AgentInterruptArgs {
+    pub project_id: String,
+    /// Real protocol では threadId 必須。mock では省略可。
+    #[serde(default)]
+    pub thread_id: Option<String>,
+    /// Real protocol では turnId 任意。
+    #[serde(default)]
+    pub turn_id: Option<String>,
+}
+
+/// DEC-018-026 ① C: 現在ストリーム中の turn を即座に中断する。
+///
+/// Real Codex app-server `turn/interrupt` の呼び出し規約:
+///   params: `{ threadId: string, turnId?: string }`
+///
+/// mock 実装では state machine で「現在 streaming 中の turn」を保持し、
+/// `turn/interrupt` 受信で stream task を terminate flag で落として
+/// `turn/completed` を `interrupted` 状態で発火する。
+#[tauri::command]
+pub async fn agent_interrupt(
+    state: tauri::State<'_, AppState>,
+    args: AgentInterruptArgs,
+) -> Result<(), String> {
+    let req_id = format!("req-{}", uuid::Uuid::new_v4());
+    let mut params = serde_json::Map::new();
+    if let Some(tid) = &args.thread_id {
+        params.insert("threadId".into(), JsonValue::String(tid.clone()));
+    } else {
+        // Real protocol 上は threadId 必須だが、mock は許容するため空文字を入れて
+        // 形だけ揃える。Real impl 切替時に上位 (use-codex hook) が threadId を
+        // 必ず保持するように修正済み。
+        params.insert("threadId".into(), JsonValue::String(String::new()));
+    }
+    if let Some(turn_id) = &args.turn_id {
+        params.insert("turnId".into(), JsonValue::String(turn_id.clone()));
+    }
+    let req = CodexRequest::new(
+        req_id,
+        method::TURN_INTERRUPT,
+        Some(JsonValue::Object(params)),
+    );
+    let resp = state
+        .multi
+        .send_request(&args.project_id, req)
+        .await
+        .map_err(|e| format!("turn/interrupt failed: {e:#}"))?;
+    if let Some(err) = resp.error {
+        return Err(format!("codex error: {} ({})", err.message, err.code));
+    }
+    Ok(())
+}

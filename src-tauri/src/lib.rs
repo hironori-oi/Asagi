@@ -105,6 +105,8 @@ pub fn run() {
             commands::codex::agent_shutdown_sidecar,
             commands::codex::agent_list_sidecars,
             commands::codex::agent_status,
+            // DEC-018-026 ① C: turn 中断
+            commands::codex::agent_interrupt,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Asagi application");

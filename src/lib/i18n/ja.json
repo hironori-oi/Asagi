@@ -88,8 +88,14 @@
       "title": "Codex と日本語で対話",
       "body": "下の入力欄にメッセージを書いて送信してください（POC 通過後に Codex CLI と接続）。"
     },
-    "placeholder": "メッセージを入力（Shift+Enter で改行、/ でコマンド）",
+    "emptyMockHint": "mock-asagi: 「ハロー」と入力してみてください",
+    "placeholder": "メッセージを入力（Cmd/Ctrl+Enter で送信、Enter で改行、/ でコマンド）",
     "send": "送信",
+    "interrupt": "中断",
+    "interrupted": "（中断されました）",
+    "thinking": "Asagi が考えています…",
+    "tokens": "{count} tokens",
+    "tokensSession": "セッション累計 {count} tokens",
     "model": "モデル",
     "effort": {
       "label": "推論の深さ",
@@ -99,6 +105,7 @@
     },
     "stub": "[stub] Codex 統合は POC 通過後に実装",
     "saveFailed": "メッセージ保存に失敗しました",
+    "interruptFailed": "中断に失敗しました",
     "clearedToast": "セッションをクリアしました",
     "status": {
       "idle": "未起動",

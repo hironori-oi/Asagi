@@ -7,6 +7,7 @@ function reset() {
     modelByProject: {},
     effortByProject: {},
     inputDraftByProject: {},
+    tokensThisSessionByProject: {},
   });
 }
 

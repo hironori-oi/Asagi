@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { MessageList } from './message-list';
 import { InputArea } from './input-area';
-import { ChatStatusBadge } from './chat-status-badge';
+import { ChatStatusBadge, ChatSessionTokenCount } from './chat-status-badge';
 import { CodexContext, type CodexContextValue } from './codex-context';
 import { useCodex } from '@/lib/codex/use-codex';
 import { useProjectStore } from '@/lib/stores/project';
@@ -35,6 +35,7 @@ export function ChatPane() {
 
   const appendUser = useChatStore((s) => s.appendUser);
   const upsertAssistant = useChatStore((s) => s.upsertAssistantStreaming);
+  const markInterrupted = useChatStore((s) => s.markInterrupted);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
 
   // 初回 (project 切替含む) で spawn / cleanup で shutdown
@@ -86,15 +87,36 @@ export function ChatPane() {
     [activeId, activeSessionId, appendUser, codex, t],
   );
 
+  // DEC-018-026 ① C: useCodex.interrupt をラップして markInterrupted も呼ぶ。
+  // Real impl 切替後も呼び出し規約は同じ (`turn/interrupt` を sidecar に送る)。
+  const interrupt = useCallback(async () => {
+    const itemId = await codex.interrupt();
+    if (itemId) {
+      markInterrupted(activeId, itemId);
+    }
+  }, [activeId, codex, markInterrupted]);
+
   const ctx = useMemo<CodexContextValue>(
     () => ({
       status: codex.status,
       isReady: codex.isReady,
       isStreaming: codex.isStreaming,
       error: codex.error,
+      awaitingFirstDelta: codex.awaitingFirstDelta,
+      streamingItemId: codex.streamingItemId,
       send,
+      interrupt,
     }),
-    [codex.status, codex.isReady, codex.isStreaming, codex.error, send],
+    [
+      codex.status,
+      codex.isReady,
+      codex.isStreaming,
+      codex.error,
+      codex.awaitingFirstDelta,
+      codex.streamingItemId,
+      send,
+      interrupt,
+    ],
   );
 
   return (
@@ -104,6 +126,7 @@ export function ChatPane() {
         className="flex h-full min-w-0 flex-1 flex-col bg-background"
       >
         <header className="flex items-center justify-end gap-2 border-b border-border/40 px-4 py-1.5">
+          <ChatSessionTokenCount />
           <ChatStatusBadge />
         </header>
         <MessageList />

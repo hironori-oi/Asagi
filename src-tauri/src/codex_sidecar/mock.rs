@@ -25,8 +25,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{json, Value as JsonValue};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::time::{sleep, Duration};
 
@@ -82,6 +83,12 @@ pub fn mock_response_tokens() -> Vec<String> {
     out
 }
 
+/// DEC-018-026 ① C: 現在ストリーム中の turn を `turn/interrupt` で
+/// 即座に終端できるよう、turn_id ごとに「中断要求済み」フラグを保持する。
+/// `turn/start` の background task が各 token 送出ループで参照し、
+/// flag = true なら delta loop を抜けて `turn/completed { status: "interrupted" }` を発火する。
+type RunningTurns = Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>;
+
 #[derive(Clone)]
 pub struct MockCodexSidecar {
     project_id: String,
@@ -91,6 +98,8 @@ pub struct MockCodexSidecar {
     item_seq: Arc<AtomicU64>,
     thread_seq: Arc<AtomicU64>,
     turn_seq: Arc<AtomicU64>,
+    /// DEC-018-026 ① C: ストリーム中の turn 状態。
+    running_turns: RunningTurns,
 }
 
 impl MockCodexSidecar {
@@ -104,6 +113,7 @@ impl MockCodexSidecar {
             item_seq: Arc::new(AtomicU64::new(0)),
             thread_seq: Arc::new(AtomicU64::new(0)),
             turn_seq: Arc::new(AtomicU64::new(0)),
+            running_turns: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -146,15 +156,24 @@ impl MockCodexSidecar {
     }
 
     /// `turn/start` ハンドラ。即 `inProgress` を返却 → 別タスクで delta + completed を流す。
+    /// DEC-018-026 ① C: running_turns に cancel flag を登録し、delta loop で監視する。
     async fn handle_turn_start(&self, id: String, params: TurnStartParams) -> CodexResponse {
         let turn_id = self.next_turn_id();
         let item_id = self.next_item_id();
+
+        // 中断 flag を登録
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        if let Ok(mut map) = self.running_turns.lock() {
+            map.insert(turn_id.clone(), cancel_flag.clone());
+        }
 
         // バックグラウンドで streaming
         let notif = self.notifications.clone();
         let turn_id_for_task = turn_id.clone();
         let item_id_for_task = item_id.clone();
         let thread_id = params.thread_id.clone();
+        let cancel_flag_for_task = cancel_flag.clone();
+        let running_turns_for_task = self.running_turns.clone();
         tokio::spawn(async move {
             // turn/started
             let _ = notif.send(CodexNotification::new(
@@ -181,8 +200,13 @@ impl MockCodexSidecar {
                     "turnId": turn_id_for_task,
                 })),
             ));
-            // 10 トークンの delta
+            // 10 トークンの delta、各送出前に cancel flag を確認
+            let mut interrupted = false;
             for tok in mock_response_tokens() {
+                if cancel_flag_for_task.load(Ordering::SeqCst) {
+                    interrupted = true;
+                    break;
+                }
                 let _ = notif.send(CodexNotification::new(
                     event::ITEM_AGENT_MESSAGE_DELTA,
                     Some(
@@ -203,20 +227,21 @@ impl MockCodexSidecar {
                         "type": "agentMessage",
                         "id": item_id_for_task,
                         "text": MOCK_RESPONSE_TEMPLATE,
-                        "phase": "final_answer",
+                        "phase": if interrupted { "interrupted" } else { "final_answer" },
                     },
                     "threadId": thread_id,
                     "turnId": turn_id_for_task,
                 })),
             ));
-            // turn/completed
+            // turn/completed (interrupted の場合は status を切替)
+            let final_status = if interrupted { "interrupted" } else { "completed" };
             let _ = notif.send(CodexNotification::new(
                 event::TURN_COMPLETED,
                 Some(
                     serde_json::to_value(TurnCompletedParams {
                         turn: TurnInfo {
-                            id: turn_id_for_task,
-                            status: "completed".into(),
+                            id: turn_id_for_task.clone(),
+                            status: final_status.into(),
                             items: vec![],
                             error: None,
                         },
@@ -224,6 +249,10 @@ impl MockCodexSidecar {
                     .expect("serialize turn/completed"),
                 ),
             ));
+            // running_turns から削除
+            if let Ok(mut map) = running_turns_for_task.lock() {
+                map.remove(&turn_id_for_task);
+            }
         });
 
         CodexResponse::ok(
@@ -238,6 +267,34 @@ impl MockCodexSidecar {
             })
             .expect("serialize turn/start result"),
         )
+    }
+
+    /// DEC-018-026 ① C: `turn/interrupt` ハンドラ。
+    /// turnId 指定があればその turn の cancel flag を立てる。
+    /// 指定なし or 不明な turnId なら現在 running 中の **全** turn を中断する。
+    fn handle_turn_interrupt(&self, params: Option<JsonValue>) {
+        let turn_id_opt = params
+            .as_ref()
+            .and_then(|p| p.get("turnId"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let map = match self.running_turns.lock() {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        match turn_id_opt {
+            Some(tid) if !tid.is_empty() => {
+                if let Some(flag) = map.get(&tid) {
+                    flag.store(true, Ordering::SeqCst);
+                }
+            }
+            _ => {
+                // turnId 未指定: 全 running turn を cancel
+                for flag in map.values() {
+                    flag.store(true, Ordering::SeqCst);
+                }
+            }
+        }
     }
 
     /// in-process で 1 リクエストを処理する（mock_server からも共有利用）。
@@ -387,7 +444,11 @@ impl MockCodexSidecar {
                 };
                 self.handle_turn_start(id, params).await
             }
-            method::TURN_INTERRUPT => CodexResponse::ok(id, json!({})),
+            method::TURN_INTERRUPT => {
+                // DEC-018-026 ① C: in-process broadcast 経路の cancel flag を立てる
+                self.handle_turn_interrupt(req.params.clone());
+                CodexResponse::ok(id, json!({}))
+            }
             method::TURN_STEER => CodexResponse::ok(
                 id,
                 json!({"turnId": "mock-turn-steered"}),
@@ -635,5 +696,68 @@ mod tests {
         assert_eq!(toks.len(), MOCK_CHAT_TOKEN_COUNT);
         let joined: String = toks.into_iter().collect();
         assert_eq!(joined, MOCK_RESPONSE_TEMPLATE);
+    }
+
+    /// DEC-018-026 ① C: turn/interrupt が delta loop を即時終端し、
+    /// turn/completed が `status: "interrupted"` で発火することを保証する。
+    #[tokio::test]
+    async fn mock_turn_interrupt_terminates_streaming_with_interrupted_status() {
+        let mut s = MockCodexSidecar::new("p-int".into());
+        s.start().await.unwrap();
+
+        let mut rx = s.subscribe_events();
+        let tid = mock_start_thread(&s, MOCK_MODEL).await;
+        let req = make_turn_start_request("req-int-1", &tid, "long task");
+        let resp = s.send_request(req).await.unwrap();
+        assert!(resp.error.is_none());
+        let r: TurnStartResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        let turn_id = r.turn.id.clone();
+
+        // 1 token だけ受け取って即 interrupt を投げる
+        // (token delay は 50ms なので 30ms 待って interrupt)
+        sleep(Duration::from_millis(30)).await;
+
+        let interrupt_req = CodexRequest::new(
+            "req-int-2",
+            method::TURN_INTERRUPT,
+            Some(json!({"threadId": tid, "turnId": turn_id})),
+        );
+        let interrupt_resp = s.send_request(interrupt_req).await.unwrap();
+        assert!(interrupt_resp.error.is_none(), "interrupt must succeed");
+
+        // turn/completed を待ち、interrupted で終端することを確認
+        let mut got_interrupted = false;
+        let mut deltas = 0usize;
+        for _ in 0..50 {
+            match tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
+                Ok(Ok(n)) => {
+                    if n.method == event::ITEM_AGENT_MESSAGE_DELTA {
+                        deltas += 1;
+                    }
+                    if n.method == event::TURN_COMPLETED {
+                        if let Some(p) = n.params {
+                            let status = p
+                                .get("turn")
+                                .and_then(|t| t.get("status"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if status == "interrupted" {
+                                got_interrupted = true;
+                            }
+                        }
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        assert!(got_interrupted, "turn/completed must arrive with status=interrupted");
+        // interrupted なので 10 token 全部は流れていないはず
+        assert!(
+            deltas < MOCK_CHAT_TOKEN_COUNT,
+            "interrupted: must emit fewer than {} deltas, got {}",
+            MOCK_CHAT_TOKEN_COUNT,
+            deltas
+        );
     }
 }

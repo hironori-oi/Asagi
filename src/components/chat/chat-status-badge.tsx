@@ -5,10 +5,15 @@
  *
  * useCodex の `status` を参照し、idle/spawning/ready/streaming/error を
  * 小さい dot + label で表示する。`null` (Context 外) では何も描画しない。
+ *
+ * DEC-018-026 ① B: ヘッダ左にセッション累計 token 数を表示する
+ * `ChatSessionTokenCount` をエクスポート。
  */
 
 import { useTranslations } from 'next-intl';
 import { useCodexContext } from './codex-context';
+import { useChatStore } from '@/lib/stores/chat';
+import { useProjectStore } from '@/lib/stores/project';
 import { cn } from '@/lib/utils';
 
 const STATUS_DOT: Record<string, string> = {
@@ -41,6 +46,29 @@ export function ChatStatusBadge() {
     >
       <span aria-hidden className={cn('h-1.5 w-1.5 rounded-full', dot)} />
       <span>{label}</span>
+    </div>
+  );
+}
+
+/**
+ * DEC-018-026 ① B: セッション累計 token 数バッジ。
+ * 0 token のときは何も描画しない（チャット未開始時のノイズ抑制）。
+ */
+export function ChatSessionTokenCount() {
+  const t = useTranslations('chat');
+  const activeId = useProjectStore((s) => s.activeProjectId);
+  const total = useChatStore(
+    (s) => s.tokensThisSessionByProject[activeId] ?? 0,
+  );
+  if (total <= 0) return null;
+  return (
+    <div
+      data-testid="chat-session-tokens"
+      data-tokens={total}
+      className="rounded-full border border-border/60 bg-surface-elevated/60 px-2 py-0.5 text-[11px] tabular-nums text-muted-foreground"
+      title={t('tokensSession', { count: total })}
+    >
+      {t('tokensSession', { count: total })}
     </div>
   );
 }

@@ -21,7 +21,11 @@
 
 use anyhow::Result;
 use serde_json::{json, Value as JsonValue};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
 use super::mock::{
@@ -29,20 +33,44 @@ use super::mock::{
 };
 use super::protocol::{event, method, CodexNotification, CodexRequest, CodexResponse};
 
+/// 出力 channel の payload は 1 行分の JSON message。
+type OutMsg = JsonValue;
+
 /// stdio mock server 起動。
 ///
 /// 1 行 1 message の line-delimited JSON。
+///
+/// DEC-018-026 ① C: turn/start を別 task で streaming するため、
+/// 出力は mpsc channel で集約する単一 writer task に統合。
+/// 入力 loop は read 専念。これにより turn/interrupt を turn/start streaming と
+/// 並行に受信できる。
 pub async fn run_stdio_server() -> Result<()> {
     let stdin = tokio::io::stdin();
-    let mut stdout = tokio::io::stdout();
+    let stdout = tokio::io::stdout();
     let mut reader = BufReader::new(stdin).lines();
 
+    // 単一 writer task
+    let (out_tx, mut out_rx) = mpsc::channel::<OutMsg>(64);
+    let writer_task = tokio::spawn(async move {
+        let mut stdout = stdout;
+        while let Some(v) = out_rx.recv().await {
+            if let Err(e) = write_message(&mut stdout, &v).await {
+                eprintln!("[mock_server] write_message error: {e}");
+                break;
+            }
+        }
+    });
+
     // Real 準拠: 起動直後 notification は流さない。
-    // ハンドシェイクは client 起点で行う。
 
     let sidecar = MockCodexSidecar::new("stdio-mock-server".into());
     let mut turn_seq: u64 = 0;
     let mut item_seq: u64 = 0;
+
+    // DEC-018-026 ① C: stdio mock の running turn 状態。
+    // turn/interrupt 受信で flag を立てる → turn/start spawn 内 loop が break。
+    let running_turns: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     while let Some(line) = reader.next_line().await? {
         let line = line.trim();
@@ -59,7 +87,7 @@ pub async fn run_stdio_server() -> Result<()> {
                     -32700,
                     format!("parse error: {e}"),
                 );
-                write_message(&mut stdout, &serde_json::to_value(err)?).await?;
+                let _ = out_tx.send(serde_json::to_value(err)?).await;
                 continue;
             }
         };
@@ -70,8 +98,7 @@ pub async fn run_stdio_server() -> Result<()> {
             if m == method::INITIALIZED {
                 sidecar.mark_initialized();
             }
-            // 他の notification は無視 (LSP 風: client → server notification を
-            // mock app-server は subscribe しない)
+            // 他の notification は無視
             continue;
         }
 
@@ -84,17 +111,42 @@ pub async fn run_stdio_server() -> Result<()> {
                     -32600,
                     format!("invalid request: {e}"),
                 );
-                write_message(&mut stdout, &serde_json::to_value(err)?).await?;
+                let _ = out_tx.send(serde_json::to_value(err)?).await;
                 continue;
             }
         };
 
         let id = req.id.clone();
 
-        // turn/start のみ stdout streaming のため特別扱い、
-        // それ以外は MockCodexSidecar に委譲
+        // turn/interrupt: running turn の cancel flag を立てる
+        if req.method == method::TURN_INTERRUPT {
+            let turn_id_opt = req
+                .params
+                .as_ref()
+                .and_then(|p| p.get("turnId"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let Ok(map) = running_turns.lock() {
+                match turn_id_opt {
+                    Some(tid) if !tid.is_empty() => {
+                        if let Some(flag) = map.get(&tid) {
+                            flag.store(true, Ordering::SeqCst);
+                        }
+                    }
+                    _ => {
+                        for flag in map.values() {
+                            flag.store(true, Ordering::SeqCst);
+                        }
+                    }
+                }
+            }
+            let resp = CodexResponse::ok(id, json!({}));
+            let _ = out_tx.send(serde_json::to_value(resp)?).await;
+            continue;
+        }
+
+        // turn/start: 別 task で streaming + cancel 監視
         if req.method == method::TURN_START && sidecar.is_initialized() {
-            // 即 inProgress 返却 → 別タスクで delta + completed
             turn_seq += 1;
             item_seq += 1;
             let turn_id = format!("mock-turn-{turn_seq}");
@@ -118,91 +170,115 @@ pub async fn run_stdio_server() -> Result<()> {
                     }
                 }),
             );
-            write_message(&mut stdout, &serde_json::to_value(resp)?).await?;
+            let _ = out_tx.send(serde_json::to_value(resp)?).await;
 
-            // turn/started notification
-            write_message(
-                &mut stdout,
-                &serde_json::to_value(CodexNotification::new(
-                    event::TURN_STARTED,
-                    Some(json!({
-                        "turn": {
-                            "id": turn_id,
-                            "status": "inProgress",
-                            "items": [],
-                            "error": null,
-                        },
-                        "threadId": thread_id,
-                    })),
-                ))?,
-            )
-            .await?;
-            // item/started
-            write_message(
-                &mut stdout,
-                &serde_json::to_value(CodexNotification::new(
-                    event::ITEM_STARTED,
-                    Some(json!({
-                        "item": {"type": "agentMessage", "id": item_id},
-                        "threadId": thread_id,
-                        "turnId": turn_id,
-                    })),
-                ))?,
-            )
-            .await?;
-            // 10 token delta
-            for tok in mock_response_tokens() {
-                let n = CodexNotification::new(
-                    event::ITEM_AGENT_MESSAGE_DELTA,
-                    Some(json!({
-                        "itemId": item_id,
-                        "delta": tok,
-                    })),
-                );
-                write_message(&mut stdout, &serde_json::to_value(n)?).await?;
-                sleep(Duration::from_millis(MOCK_CHAT_TOKEN_DELAY_MS)).await;
+            let cancel_flag = Arc::new(AtomicBool::new(false));
+            if let Ok(mut map) = running_turns.lock() {
+                map.insert(turn_id.clone(), cancel_flag.clone());
             }
-            // item/completed
-            write_message(
-                &mut stdout,
-                &serde_json::to_value(CodexNotification::new(
-                    event::ITEM_COMPLETED,
-                    Some(json!({
-                        "item": {
-                            "type": "agentMessage",
-                            "id": item_id,
-                            "text": MOCK_RESPONSE_TEMPLATE,
-                            "phase": "final_answer",
-                        },
-                        "threadId": thread_id,
-                        "turnId": turn_id,
-                    })),
-                ))?,
-            )
-            .await?;
-            // turn/completed
-            write_message(
-                &mut stdout,
-                &serde_json::to_value(CodexNotification::new(
-                    event::TURN_COMPLETED,
-                    Some(json!({
-                        "turn": {
-                            "id": turn_id,
-                            "status": "completed",
-                            "items": [],
-                            "error": null,
-                        }
-                    })),
-                ))?,
-            )
-            .await?;
+            let out_tx_task = out_tx.clone();
+            let running_turns_task = running_turns.clone();
+            let turn_id_for_task = turn_id.clone();
+            let item_id_for_task = item_id.clone();
+            let thread_id_for_task = thread_id.clone();
+            tokio::spawn(async move {
+                let _ = out_tx_task
+                    .send(
+                        serde_json::to_value(CodexNotification::new(
+                            event::TURN_STARTED,
+                            Some(json!({
+                                "turn": {
+                                    "id": turn_id_for_task,
+                                    "status": "inProgress",
+                                    "items": [],
+                                    "error": null,
+                                },
+                                "threadId": thread_id_for_task,
+                            })),
+                        ))
+                        .unwrap_or(JsonValue::Null),
+                    )
+                    .await;
+                let _ = out_tx_task
+                    .send(
+                        serde_json::to_value(CodexNotification::new(
+                            event::ITEM_STARTED,
+                            Some(json!({
+                                "item": {"type": "agentMessage", "id": item_id_for_task},
+                                "threadId": thread_id_for_task,
+                                "turnId": turn_id_for_task,
+                            })),
+                        ))
+                        .unwrap_or(JsonValue::Null),
+                    )
+                    .await;
+                let mut interrupted = false;
+                for tok in mock_response_tokens() {
+                    if cancel_flag.load(Ordering::SeqCst) {
+                        interrupted = true;
+                        break;
+                    }
+                    let n = CodexNotification::new(
+                        event::ITEM_AGENT_MESSAGE_DELTA,
+                        Some(json!({
+                            "itemId": item_id_for_task,
+                            "delta": tok,
+                        })),
+                    );
+                    let _ = out_tx_task
+                        .send(serde_json::to_value(n).unwrap_or(JsonValue::Null))
+                        .await;
+                    sleep(Duration::from_millis(MOCK_CHAT_TOKEN_DELAY_MS)).await;
+                }
+                let _ = out_tx_task
+                    .send(
+                        serde_json::to_value(CodexNotification::new(
+                            event::ITEM_COMPLETED,
+                            Some(json!({
+                                "item": {
+                                    "type": "agentMessage",
+                                    "id": item_id_for_task,
+                                    "text": MOCK_RESPONSE_TEMPLATE,
+                                    "phase": if interrupted { "interrupted" } else { "final_answer" },
+                                },
+                                "threadId": thread_id_for_task,
+                                "turnId": turn_id_for_task,
+                            })),
+                        ))
+                        .unwrap_or(JsonValue::Null),
+                    )
+                    .await;
+                let final_status = if interrupted { "interrupted" } else { "completed" };
+                let _ = out_tx_task
+                    .send(
+                        serde_json::to_value(CodexNotification::new(
+                            event::TURN_COMPLETED,
+                            Some(json!({
+                                "turn": {
+                                    "id": turn_id_for_task,
+                                    "status": final_status,
+                                    "items": [],
+                                    "error": null,
+                                }
+                            })),
+                        ))
+                        .unwrap_or(JsonValue::Null),
+                    )
+                    .await;
+                if let Ok(mut map) = running_turns_task.lock() {
+                    map.remove(&turn_id_for_task);
+                }
+            });
             continue;
         }
 
         // 他は MockCodexSidecar に委譲
         let resp = sidecar.dispatch_request(req).await;
-        write_message(&mut stdout, &serde_json::to_value(resp)?).await?;
+        let _ = out_tx.send(serde_json::to_value(resp)?).await;
     }
+
+    drop(out_tx);
+    let _ = writer_task.await;
     Ok(())
 }
 

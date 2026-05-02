@@ -88,8 +88,14 @@
       "title": "Talk to Codex in your language",
       "body": "Type a message below and press Send (Codex CLI integration is wired in after the POC clears)."
     },
-    "placeholder": "Type a message (Shift+Enter for newline, / for commands)",
+    "emptyMockHint": "mock-asagi: try typing \"hello\"",
+    "placeholder": "Type a message (Cmd/Ctrl+Enter to send, Enter for newline, / for commands)",
     "send": "Send",
+    "interrupt": "Interrupt",
+    "interrupted": "(interrupted)",
+    "thinking": "Asagi is thinking…",
+    "tokens": "{count} tokens",
+    "tokensSession": "Session total {count} tokens",
     "model": "Model",
     "effort": {
       "label": "Reasoning effort",
@@ -99,6 +105,7 @@
     },
     "stub": "[stub] Codex integration ships after the POC clears.",
     "saveFailed": "Failed to save message",
+    "interruptFailed": "Failed to interrupt",
     "clearedToast": "Session cleared",
     "status": {
       "idle": "idle",

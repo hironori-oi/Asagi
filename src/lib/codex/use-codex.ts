@@ -19,6 +19,7 @@ import {
   validateTurnCompletedParams,
 } from './schemas';
 import {
+  interruptTurn as interruptTurnImpl,
   sendMessage as sendMessageImpl,
   shutdownSidecar as shutdownSidecarImpl,
   spawnSidecar as spawnSidecarImpl,
@@ -40,6 +41,17 @@ export interface UseCodexResult {
   sendMessage: (content: string) => Promise<void>;
   spawn: () => Promise<void>;
   shutdown: () => Promise<void>;
+  /**
+   * DEC-018-026 ① C: 現在 streaming 中の turn を即座に中断する。
+   * Real impl 切替後も同じ呼び出し規約 (`turn/interrupt` を送る) で
+   * UI 側コードは無変更で動く。streaming で無い時は no-op。
+   * 中断された assistant message id を返す（UI が markInterrupted を呼ぶため）。
+   */
+  interrupt: () => Promise<string | null>;
+  /** 直近に streaming を開始した assistant item id (DEC-018-026 ① A: typing indicator 判定用)。 */
+  streamingItemId: string | null;
+  /** turn/start 送信後、最初の delta が来るまで true (DEC-018-026 ① A: typing indicator 判定用)。 */
+  awaitingFirstDelta: boolean;
   isReady: boolean;
   isStreaming: boolean;
   status: CodexStatus;
@@ -53,11 +65,17 @@ export function useCodex(projectId: string): UseCodexResult {
   const [isStreaming, setIsStreaming] = useState(false);
   const [status, setStatus] = useState<CodexStatus>('idle');
   const [error, setError] = useState<string | null>(null);
+  /** DEC-018-026 ① A: typing indicator 用。turn/start 送信後 → 最初の delta まで true。 */
+  const [awaitingFirstDelta, setAwaitingFirstDelta] = useState(false);
+  /** DEC-018-026 ① A: 直近の streaming 中 assistant item id。delta 着弾で確定。 */
+  const [streamingItemId, setStreamingItemId] = useState<string | null>(null);
 
   // 現在ストリーミング中の assistant item id 追跡
   const streamingItemIdRef = useRef<string | null>(null);
   // 現在 turn を保持する thread_id (mock では project ごとに最初の thread/start が固定)
   const threadIdRef = useRef<string | null>(null);
+  // DEC-018-026 ① C: turn/interrupt 送信に必要な現 turn id
+  const currentTurnIdRef = useRef<string | null>(null);
 
   // event 購読
   useEffect(() => {
@@ -72,6 +90,9 @@ export function useCodex(projectId: string): UseCodexResult {
           (e) => {
             const p = validateItemAgentMessageDeltaParams(e.payload);
             if (!p) return;
+            // DEC-018-026 ① A: 最初の delta が来た瞬間に typing indicator を消す
+            setAwaitingFirstDelta(false);
+            setStreamingItemId(p.itemId);
             setMessages((prev) => {
               const last = prev[prev.length - 1];
               if (last && last.id === p.itemId && last.role === 'assistant') {
@@ -110,7 +131,9 @@ export function useCodex(projectId: string): UseCodexResult {
             );
             setIsStreaming(false);
             setStatus('ready');
+            setAwaitingFirstDelta(false);
             streamingItemIdRef.current = null;
+            currentTurnIdRef.current = null;
           },
         );
       } catch (err) {
@@ -167,6 +190,9 @@ export function useCodex(projectId: string): UseCodexResult {
       ]);
       setIsStreaming(true);
       setStatus('streaming');
+      // DEC-018-026 ① A: typing indicator ON、最初の delta で OFF
+      setAwaitingFirstDelta(true);
+      setStreamingItemId(null);
       try {
         const result = await sendMessageImpl({
           projectId,
@@ -174,21 +200,61 @@ export function useCodex(projectId: string): UseCodexResult {
           threadId: threadIdRef.current ?? undefined,
         });
         threadIdRef.current = result.thread_id;
+        currentTurnIdRef.current = result.turn_id;
         // streaming は turn/completed event で false になる
       } catch (e) {
         setError(`sendMessage failed: ${String(e)}`);
         setIsStreaming(false);
         setStatus('error');
+        setAwaitingFirstDelta(false);
       }
     },
     [projectId],
   );
 
+  /**
+   * DEC-018-026 ① C: 現 turn を中断する。
+   * Real impl 切替後も同じ規約 (`turn/interrupt` を sidecar に送る) で動く。
+   * 中断対象の assistant message id を返す（呼び出し側がストア markInterrupted で利用）。
+   */
+  const interrupt = useCallback(async (): Promise<string | null> => {
+    const targetItemId = streamingItemIdRef.current;
+    const threadId = threadIdRef.current;
+    const turnId = currentTurnIdRef.current;
+    if (!isStreaming) return null;
+    try {
+      await interruptTurnImpl({
+        projectId,
+        threadId: threadId ?? undefined,
+        turnId: turnId ?? undefined,
+      });
+    } catch (e) {
+      setError(`interrupt failed: ${String(e)}`);
+      // 中断 RPC が失敗しても UI は中断扱いにする (mock 完成度優先、Real impl では retry 設計を別途)
+    }
+    // UI 側の streaming 状態を即時終端する。turn/completed 事後に届く可能性があるが、
+    // streamingItemIdRef を null にリセットするので二重 markInterrupted は起きない。
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === targetItemId ? { ...m, streaming: false } : m,
+      ),
+    );
+    setIsStreaming(false);
+    setStatus(isReady ? 'ready' : 'idle');
+    setAwaitingFirstDelta(false);
+    streamingItemIdRef.current = null;
+    currentTurnIdRef.current = null;
+    return targetItemId;
+  }, [isReady, isStreaming, projectId]);
+
   const clear = useCallback(() => {
     setMessages([]);
     setError(null);
     setIsStreaming(false);
+    setAwaitingFirstDelta(false);
+    setStreamingItemId(null);
     streamingItemIdRef.current = null;
+    currentTurnIdRef.current = null;
     if (status === 'streaming' || status === 'error') {
       setStatus(isReady ? 'ready' : 'idle');
     }
@@ -199,6 +265,9 @@ export function useCodex(projectId: string): UseCodexResult {
     sendMessage,
     spawn,
     shutdown,
+    interrupt,
+    streamingItemId,
+    awaitingFirstDelta,
     isReady,
     isStreaming,
     status,

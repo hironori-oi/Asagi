@@ -48,6 +48,31 @@ export async function shutdownSidecar(projectId: string): Promise<void> {
 }
 
 /**
+ * DEC-018-026 ① C: 現在実行中の turn を中断する。
+ *
+ * Real Codex app-server `turn/interrupt` 仕様:
+ *   params: `{ threadId: string, turnId?: string }`
+ *
+ * mock 側でも同シグネチャを受理し、Tauri command `agent_interrupt` 経由で
+ * `turn/interrupt` request を送る。失敗時は throw。
+ */
+export interface AgentInterruptArgs {
+  projectId: string;
+  threadId?: string;
+  turnId?: string;
+}
+
+export async function interruptTurn(args: AgentInterruptArgs): Promise<void> {
+  await invoke<void>('agent_interrupt', {
+    args: {
+      project_id: args.projectId,
+      thread_id: args.threadId,
+      turn_id: args.turnId,
+    },
+  });
+}
+
+/**
  * active な sidecar 一覧を返す。
  */
 export async function listSidecars(): Promise<string[]> {
