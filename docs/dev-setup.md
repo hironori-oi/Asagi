@@ -54,7 +54,7 @@ npm run tauri:dev
 
 # Web 単体起動 (UI のみ確認、Tauri 非接続)
 npm run dev
-# → http://localhost:3000
+# → http://localhost:1420 (Asagi 専用 port、Tauri quickstart 標準、port 衝突回避、AS-CLEAN-08)
 ```
 
 ## テスト

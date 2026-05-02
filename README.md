@@ -112,7 +112,7 @@ WebView2 単体で確認したい場合 (CI / 軽量):
 
 ```bash
 npm run dev
-# → http://localhost:3000
+# → http://localhost:1420 (Asagi 専用 port、AS-CLEAN-08)
 ```
 
 ### テスト

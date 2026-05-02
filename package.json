@@ -4,7 +4,7 @@
   "private": true,
   "description": "Asagi - Codex Multi-Project IDE (PRJ-018)",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 1420",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
