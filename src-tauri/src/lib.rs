@@ -22,6 +22,7 @@ pub mod settings;
 
 use crate::codex_sidecar::auth_watchdog::{AuthWatchdog, ENV_WATCHDOG_DISABLED};
 use crate::codex_sidecar::multi::MultiSidecarManager;
+use crate::codex_sidecar::SidecarMode;
 
 /// アプリ全体で共有する状態。
 /// SQLite コネクションと Multi-Sidecar マップを保持する。
@@ -32,6 +33,14 @@ pub struct AppState {
     /// DEC-018-028 QW1 (F3 Auth Watchdog)。`WatchdogEmitter` trait で
     /// emitter を抽象化したため、generic param は不要。
     pub auth_watchdog: Arc<RwLock<Option<AuthWatchdog>>>,
+    /// DEC-018-036 / AS-144: 現在の Sidecar mode（runtime 切替可能）。
+    ///
+    /// 起動時は `SidecarMode::from_env()` で `ASAGI_SIDECAR_MODE` から初期化し、
+    /// 以降は `agent_set_sidecar_mode` Tauri command で UI から切替可能。
+    /// `agent_spawn_sidecar` は本値を読んで mock / real を選択する。
+    /// 既存 sidecar はモード変更後も再 spawn まで現行モードで継続動作する
+    /// （additive 切替、mock fallback 維持）。
+    pub current_sidecar_mode: Arc<RwLock<SidecarMode>>,
 }
 
 impl Default for AppState {
@@ -40,6 +49,7 @@ impl Default for AppState {
             db: Mutex::new(None),
             multi: Arc::new(MultiSidecarManager::new()),
             auth_watchdog: Arc::new(RwLock::new(None)),
+            current_sidecar_mode: Arc::new(RwLock::new(SidecarMode::from_env())),
         }
     }
 }
@@ -135,6 +145,9 @@ pub fn run() {
             commands::codex::agent_status,
             // DEC-018-026 ① C: turn 中断
             commands::codex::agent_interrupt,
+            // AS-144 / DEC-018-036: Sidecar mode runtime switch (mock <-> real)
+            commands::codex::agent_get_sidecar_mode,
+            commands::codex::agent_set_sidecar_mode,
             // DEC-018-028 QW1 (F3 Auth Watchdog) commands
             commands::codex::auth_watchdog_start,
             commands::codex::auth_watchdog_stop,

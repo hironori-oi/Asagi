@@ -32,13 +32,18 @@ use crate::codex_sidecar::{CodexRequest, SidecarMode};
 use crate::AppState;
 
 /// Multi-Sidecar 起動。同一 project_id への重複呼び出しは no-op。
+///
+/// AS-144 / DEC-018-036: モードは `AppState.current_sidecar_mode` から読む。
+/// 起動時は env (`ASAGI_SIDECAR_MODE`) で初期化されるが、UI から
+/// `agent_set_sidecar_mode` で切替された後は最新値が使われる
+/// （既存 sidecar は再 spawn まで現行モード継続、additive 切替）。
 #[tauri::command]
 pub async fn agent_spawn_sidecar<R: Runtime>(
     app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     project_id: String,
 ) -> Result<(), String> {
-    let mode = SidecarMode::from_env();
+    let mode = *state.current_sidecar_mode.read().await;
     state
         .multi
         .spawn_for(project_id.clone(), mode)
@@ -301,4 +306,138 @@ pub async fn auth_watchdog_get_state(
         .as_ref()
         .ok_or_else(|| "AuthWatchdog not initialized".to_string())?;
     Ok(w.get_state(&project_id).await)
+}
+
+// ---------------------------------------------------------------------
+// AS-144 / DEC-018-036: Sidecar mode runtime switch
+// ---------------------------------------------------------------------
+
+/// Sidecar mode 文字列形式。frontend と TS 型 (`'mock' | 'real'`) で一致。
+fn mode_to_str(m: SidecarMode) -> &'static str {
+    match m {
+        SidecarMode::Mock => "mock",
+        SidecarMode::Real => "real",
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetSidecarModeArgs {
+    /// `"mock"` または `"real"`。それ以外は Err。
+    pub mode: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SidecarModeResult {
+    pub mode: &'static str,
+}
+
+/// 現在の sidecar mode を返す。UI 起動時の seed 用。
+///
+/// 起動直後は `ASAGI_SIDECAR_MODE` 環境変数（未設定なら `mock`）。
+/// `agent_set_sidecar_mode` で UI から切替後は最新値。
+#[tauri::command]
+pub async fn agent_get_sidecar_mode(
+    state: tauri::State<'_, AppState>,
+) -> Result<SidecarModeResult, String> {
+    let m = *state.current_sidecar_mode.read().await;
+    Ok(SidecarModeResult {
+        mode: mode_to_str(m),
+    })
+}
+
+/// Sidecar mode を runtime で切替える（mock <-> real）。
+///
+/// 既存 sidecar は触らない（再 spawn まで現行モードで継続動作）。
+/// 切替後の新規 `agent_spawn_sidecar` から新モードが反映される。
+/// UI から「全 project shutdown → mode 変更 → spawn」のフローで完全切替可能。
+#[tauri::command]
+pub async fn agent_set_sidecar_mode(
+    state: tauri::State<'_, AppState>,
+    args: SetSidecarModeArgs,
+) -> Result<SidecarModeResult, String> {
+    use std::str::FromStr;
+    let new_mode =
+        SidecarMode::from_str(&args.mode).map_err(|e| format!("invalid sidecar mode: {e}"))?;
+    {
+        let mut w = state.current_sidecar_mode.write().await;
+        *w = new_mode;
+    }
+    tracing::info!(
+        "sidecar mode switched to {} (existing sidecars unchanged until re-spawn)",
+        mode_to_str(new_mode)
+    );
+    Ok(SidecarModeResult {
+        mode: mode_to_str(new_mode),
+    })
+}
+
+// ---------------------------------------------------------------------
+// AS-144 / DEC-018-036 unit tests
+// ---------------------------------------------------------------------
+//
+// Tauri command 関数本体は `tauri::State` を要求するため直接呼び出しテストが
+// 困難。代わりに sidecar mode runtime 切替の wiring を `AppState` レベルで
+// 検証することで、command 経路の健全性 (state 読み書き / mode_to_str /
+// SidecarMode::from_str) を担保する。
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AppState;
+
+    #[test]
+    fn mode_to_str_round_trips_via_from_str() {
+        use std::str::FromStr;
+        for &m in &[SidecarMode::Mock, SidecarMode::Real] {
+            let s = mode_to_str(m);
+            let parsed = SidecarMode::from_str(s).expect("round trip");
+            assert_eq!(parsed, m, "mode_to_str/from_str must round-trip");
+        }
+    }
+
+    #[tokio::test]
+    async fn appstate_default_initializes_sidecar_mode_from_env() {
+        // SAFETY: 並列テストでの env 競合を避けるため、ここで明示的に解除。
+        std::env::remove_var("ASAGI_SIDECAR_MODE");
+        let s = AppState::default();
+        let m = *s.current_sidecar_mode.read().await;
+        assert_eq!(m, SidecarMode::Mock, "default must be Mock when env unset");
+    }
+
+    #[tokio::test]
+    async fn runtime_mode_switch_updates_appstate() {
+        // 起動時 Mock → real に切替 → 元に戻す、を AppState 直接操作で検証。
+        // command 関数本体は tauri::State<...> 抽出のため直叩き不可、
+        // 内部 wiring (state.write().await + read().await) を検査する。
+        std::env::remove_var("ASAGI_SIDECAR_MODE");
+        let s = AppState::default();
+        assert_eq!(*s.current_sidecar_mode.read().await, SidecarMode::Mock);
+
+        // mock → real
+        {
+            let mut w = s.current_sidecar_mode.write().await;
+            *w = SidecarMode::Real;
+        }
+        assert_eq!(*s.current_sidecar_mode.read().await, SidecarMode::Real);
+
+        // real → mock fallback (additive 切替の保証)
+        {
+            let mut w = s.current_sidecar_mode.write().await;
+            *w = SidecarMode::Mock;
+        }
+        assert_eq!(*s.current_sidecar_mode.read().await, SidecarMode::Mock);
+    }
+
+    #[test]
+    fn set_sidecar_mode_args_accepts_lower_and_upper_case() {
+        use std::str::FromStr;
+        // SidecarMode::from_str (mod.rs) は ascii_lowercase 経由で
+        // 大小文字混在を許容する仕様。command の入力 surface としても
+        // この契約に依存することを test で固定。
+        for s in &["mock", "MOCK", "Mock", "real", "REAL", "Real"] {
+            assert!(SidecarMode::from_str(s).is_ok(), "must accept: {s}");
+        }
+        for s in &["", "stub", "MockReal"] {
+            assert!(SidecarMode::from_str(s).is_err(), "must reject: {s}");
+        }
+    }
 }

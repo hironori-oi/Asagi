@@ -4,9 +4,23 @@ import { Drawer } from 'vaul';
 import { useTranslations } from 'next-intl';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
-import { X, Sun, Moon, Monitor, Languages, Keyboard } from 'lucide-react';
+import {
+  X,
+  Sun,
+  Moon,
+  Monitor,
+  Languages,
+  Keyboard,
+  PlugZap,
+  FlaskConical,
+} from 'lucide-react';
 import { useUiStore } from '@/lib/stores/ui';
 import { useLocaleStore, type Locale, SUPPORTED_LOCALES } from '@/lib/stores/locale';
+import {
+  useSidecarModeStore,
+  SIDECAR_MODES,
+  type SidecarMode,
+} from '@/lib/stores/sidecar-mode';
 import { KEYBINDINGS, formatHotkey } from '@/lib/keybindings';
 import { cn } from '@/lib/utils';
 
@@ -16,6 +30,11 @@ const THEME_ICON: Record<ThemeOption, typeof Sun> = {
   light: Sun,
   dark: Moon,
   system: Monitor,
+};
+
+const SIDECAR_ICON: Record<SidecarMode, typeof Sun> = {
+  mock: FlaskConical,
+  real: PlugZap,
 };
 
 /**
@@ -41,6 +60,13 @@ export function SettingsDrawer() {
   const { theme, setTheme } = useTheme();
   const { locale, setLocale } = useLocaleStore();
 
+  // AS-144 / DEC-018-036: Sidecar mode runtime switch
+  const sidecarMode = useSidecarModeStore((s) => s.mode);
+  const sidecarSwitching = useSidecarModeStore((s) => s.switching);
+  const setSidecarMode = useSidecarModeStore((s) => s.setMode);
+  const tSidecar = useTranslations('settings.sidecar');
+  const tSidecarOptions = useTranslations('settings.sidecar.options');
+
   const handleTheme = (value: ThemeOption) => {
     setTheme(value);
     toast.success(tToast('themeSwitched', { theme: tThemeOptions(value) }));
@@ -49,6 +75,16 @@ export function SettingsDrawer() {
   const handleLocale = (value: Locale) => {
     setLocale(value);
     toast.success(tToast('localeSwitched', { locale: tLocaleOptions(value) }));
+  };
+
+  const handleSidecarMode = async (value: SidecarMode) => {
+    if (value === sidecarMode || sidecarSwitching) return;
+    try {
+      await setSidecarMode(value);
+      toast.success(tSidecar('switched', { mode: tSidecarOptions(value) }));
+    } catch {
+      toast.error(tSidecar('switchFailed'));
+    }
   };
 
   return (
@@ -138,6 +174,59 @@ export function SettingsDrawer() {
                   })}
                 </div>
               </div>
+            </section>
+
+            <section>
+              <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                {t('sections.sidecar')}
+              </h3>
+              <p className="mb-2 text-xs text-muted-foreground">
+                {tSidecar('description')}
+              </p>
+              <div
+                role="radiogroup"
+                aria-label={tSidecar('label')}
+                data-testid="sidecar-mode-group"
+                className="grid grid-cols-2 gap-2"
+              >
+                {SIDECAR_MODES.map((opt) => {
+                  const Icon = SIDECAR_ICON[opt];
+                  const selected = sidecarMode === opt;
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      data-testid={`sidecar-mode-option-${opt}`}
+                      onClick={() => void handleSidecarMode(opt)}
+                      disabled={sidecarSwitching}
+                      className={cn(
+                        'flex flex-col items-center gap-1.5 rounded-md border px-2 py-3 text-xs transition-colors duration-fast ease-out-expo',
+                        'disabled:cursor-not-allowed disabled:opacity-60',
+                        selected
+                          ? 'border-accent bg-accent/10 text-foreground'
+                          : 'border-border text-muted-foreground hover:bg-surface-elevated'
+                      )}
+                    >
+                      <Icon strokeWidth={1.5} className="h-4 w-4" />
+                      <span>{tSidecarOptions(opt)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {sidecarSwitching ? (
+                <p
+                  role="status"
+                  className="mt-1.5 text-[11px] text-muted-foreground"
+                >
+                  {tSidecar('switching')}
+                </p>
+              ) : (
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  {tSidecar('note')}
+                </p>
+              )}
             </section>
 
             <section>

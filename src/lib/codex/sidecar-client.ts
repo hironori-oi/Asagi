@@ -154,3 +154,49 @@ export async function authWatchdogGetState(
 ): Promise<AuthWatchdogState> {
   return invoke<AuthWatchdogState>('auth_watchdog_get_state', { projectId });
 }
+
+// --------------------------------------------------------------------------
+// AS-144 / DEC-018-036: Sidecar mode runtime switch (mock <-> real)
+// --------------------------------------------------------------------------
+
+/**
+ * Sidecar mode 値。Rust 側 `SidecarMode` (mod.rs) と一致。
+ *   - `mock`: 本物の Codex CLI 不要、in-process MockCodexSidecar
+ *   - `real`: Codex CLI 0.128.0 を spawn、`codex login` 完了済が前提
+ */
+export type SidecarMode = 'mock' | 'real';
+
+/**
+ * Rust `SidecarModeResult` (commands/codex.rs) と一致する Tauri command 戻り値。
+ * `tauri::generate_handler!` macro 経由で `static str` がそのまま `string` で
+ * 返却されるため field 名は `mode` 固定。
+ */
+interface SidecarModeResult {
+  mode: SidecarMode;
+}
+
+/**
+ * 現在の sidecar mode を取得（UI 起動時の seed）。
+ *
+ * 起動時の値は Rust 側で `SidecarMode::from_env()` により `ASAGI_SIDECAR_MODE`
+ * 環境変数（未設定なら `mock`）から決まる。`setSidecarMode` で UI から切替後は
+ * 最新値が返る。
+ */
+export async function getSidecarMode(): Promise<SidecarMode> {
+  const r = await invoke<SidecarModeResult>('agent_get_sidecar_mode');
+  return r.mode;
+}
+
+/**
+ * Sidecar mode を runtime で切替える（mock <-> real）。
+ *
+ * 既存 sidecar は触らない（再 spawn まで現行モードで継続動作）。
+ * 完全切替には呼出側で「全 project shutdown → setSidecarMode → spawn」を
+ * 順に実行する必要がある。invalid な値は throw。
+ */
+export async function setSidecarMode(mode: SidecarMode): Promise<SidecarMode> {
+  const r = await invoke<SidecarModeResult>('agent_set_sidecar_mode', {
+    args: { mode },
+  });
+  return r.mode;
+}

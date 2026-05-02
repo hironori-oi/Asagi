@@ -120,6 +120,12 @@
       "requires_reauth": "Re-login required",
       "error": "Auth check failed",
       "checkNow": "Check now"
+    },
+    "modeBadge": {
+      "mock": "MOCK",
+      "real": "REAL",
+      "tooltipMock": "Mock mode (no Codex CLI)",
+      "tooltipReal": "Real mode (Codex CLI connected)"
     }
   },
   "inspector": {
@@ -190,7 +196,8 @@
     "sections": {
       "appearance": "Appearance",
       "language": "Language",
-      "shortcuts": "Shortcuts"
+      "shortcuts": "Shortcuts",
+      "sidecar": "Codex connection"
     },
     "theme": {
       "label": "Theme",
@@ -206,6 +213,18 @@
         "ja": "日本語",
         "en": "English"
       }
+    },
+    "sidecar": {
+      "label": "Connection mode",
+      "description": "Choose whether to connect to the real Codex CLI or run against the in-process mock server.",
+      "note": "Switching applies to projects opened after the change. Close and re-open a project to switch its existing connection.",
+      "switching": "Switching…",
+      "options": {
+        "mock": "Mock (no CLI required)",
+        "real": "Real (spawn Codex CLI)"
+      },
+      "switched": "Connection mode switched to {mode}",
+      "switchFailed": "Failed to switch connection mode"
     },
     "close": "Close"
   },

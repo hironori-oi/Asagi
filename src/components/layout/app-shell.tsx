@@ -1,6 +1,8 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useWelcomeStore } from '@/lib/stores/welcome';
+import { useSidecarModeStore } from '@/lib/stores/sidecar-mode';
 import { WelcomeWizard } from '@/components/welcome/wizard';
 import { TitleBar } from './title-bar';
 import { StatusBar } from './status-bar';
@@ -26,6 +28,13 @@ import { GlobalKeybindings } from '@/components/keybindings/global-keybindings';
  */
 export function AppShell() {
   const completed = useWelcomeStore((s) => s.completed);
+  const refreshSidecarMode = useSidecarModeStore((s) => s.refresh);
+
+  // AS-144 / DEC-018-036: 起動時に backend から現 sidecar mode を seed する。
+  // 失敗時は store 内で `mock` fallback されるため UI は常に動作する。
+  useEffect(() => {
+    void refreshSidecarMode();
+  }, [refreshSidecarMode]);
 
   return (
     <>

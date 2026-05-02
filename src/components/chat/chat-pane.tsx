@@ -5,7 +5,11 @@ import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { MessageList } from './message-list';
 import { InputArea } from './input-area';
-import { ChatStatusBadge, ChatSessionTokenCount } from './chat-status-badge';
+import {
+  ChatStatusBadge,
+  ChatSessionTokenCount,
+  ChatSidecarModeBadge,
+} from './chat-status-badge';
 import { AuthBadge } from './auth-badge';
 import { CodexContext, type CodexContextValue } from './codex-context';
 import { useCodex } from '@/lib/codex/use-codex';
@@ -128,6 +132,7 @@ export function ChatPane() {
       >
         <header className="flex items-center justify-end gap-2 border-b border-border/40 px-4 py-1.5">
           <ChatSessionTokenCount />
+          <ChatSidecarModeBadge />
           <AuthBadge />
           <ChatStatusBadge />
         </header>

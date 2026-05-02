@@ -120,6 +120,12 @@
       "requires_reauth": "再ログイン必要",
       "error": "認証 取得失敗",
       "checkNow": "今すぐ確認"
+    },
+    "modeBadge": {
+      "mock": "MOCK",
+      "real": "REAL",
+      "tooltipMock": "Mock モード（Codex CLI 不要）",
+      "tooltipReal": "Real モード（Codex CLI 接続）"
     }
   },
   "inspector": {
@@ -190,7 +196,8 @@
     "sections": {
       "appearance": "外観",
       "language": "言語",
-      "shortcuts": "ショートカット"
+      "shortcuts": "ショートカット",
+      "sidecar": "Codex 接続モード"
     },
     "theme": {
       "label": "テーマ",
@@ -206,6 +213,18 @@
         "ja": "日本語",
         "en": "English"
       }
+    },
+    "sidecar": {
+      "label": "接続モード",
+      "description": "Codex CLI に実接続するか、mock サーバで動作確認するかを切替えます。",
+      "note": "切替後、新しいプロジェクトを開いた際から反映されます。既存の接続を切替えるには一度プロジェクトを閉じてください。",
+      "switching": "切替中…",
+      "options": {
+        "mock": "Mock（CLI 不要）",
+        "real": "Real（Codex CLI を起動）"
+      },
+      "switched": "接続モードを {mode} に切替えました",
+      "switchFailed": "接続モードの切替に失敗しました"
     },
     "close": "閉じる"
   },
