@@ -6,6 +6,10 @@ authors = ["hironori-oi"]
 license = "TBD"
 edition = "2021"
 rust-version = "1.94"
+# 複数 [[bin]] 定義時の default-run（AS-132 で mock-codex-app-server を追加して以降必須）。
+# `tauri dev` が内部で `cargo run --no-default-features --color always --` を実行する際、
+# どちらのバイナリを起動すべきか default-run なしでは決定不能になるため、本体 = asagi を明示。
+default-run = "asagi"
 
 # 配布バイナリ生成時のメタ情報
 [package.metadata.bundle]
