@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { GeistSans } from 'geist/font/sans';
 import { GeistMono } from 'geist/font/mono';
 import { ThemeProvider } from 'next-themes';
@@ -9,13 +9,27 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Asagi',
-  description: 'Codex マルチプロジェクト IDE',
+  description: 'Codex 版 IDE — 浅葱（あさぎ）。日本語ファースト、Slack 風 Multi-Project、ローカル永続化。',
+  applicationName: 'Asagi',
   icons: {
     icon: [
       { url: '/favicon.svg', type: 'image/svg+xml' },
       { url: '/favicon.ico', sizes: 'any' },
+      { url: '/favicon-16x16.png', type: 'image/png', sizes: '16x16' },
+      { url: '/favicon-32x32.png', type: 'image/png', sizes: '32x32' },
+    ],
+    apple: [
+      { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
     ],
   },
+};
+
+// DEC-018-020 (γ 浅葱滴) brand accent — dark/light で分離指定
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: '#0a0e14' },
+    { media: '(prefers-color-scheme: light)', color: '#5BB8C4' },
+  ],
 };
 
 export default function RootLayout({
