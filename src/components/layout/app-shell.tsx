@@ -5,6 +5,7 @@ import { useWelcomeStore } from '@/lib/stores/welcome';
 import { useSidecarModeStore } from '@/lib/stores/sidecar-mode';
 import { WelcomeWizard } from '@/components/welcome/wizard';
 import { TitleBar } from './title-bar';
+import { TrayBar } from './tray-bar';
 import { StatusBar } from './status-bar';
 import { ProjectRail } from '@/components/project-rail/project-rail';
 import { ChatPane } from '@/components/chat/chat-pane';
@@ -49,6 +50,7 @@ export function AppShell() {
       ) : (
         <main className="flex h-screen flex-col bg-background text-foreground">
           <TitleBar />
+          <TrayBar />
           <div className="flex min-h-0 flex-1">
             <ProjectRail />
             <Sidebar />

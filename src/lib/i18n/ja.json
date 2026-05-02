@@ -67,6 +67,31 @@
       "branchUnknown": "未取得",
       "quota": "Codex プラン",
       "quotaPlan": "{plan}: 残 {remaining}%"
+    },
+    "traybar": {
+      "label": "セッション設定ツールバー",
+      "model": {
+        "label": "モデル",
+        "aria": "モデルを選択"
+      },
+      "effort": {
+        "label": "推論",
+        "aria": "推論の深さを選択",
+        "options": {
+          "low": {
+            "label": "low",
+            "desc": "速度重視・短い応答向け"
+          },
+          "medium": {
+            "label": "medium",
+            "desc": "標準的なバランス（推奨）"
+          },
+          "high": {
+            "label": "high",
+            "desc": "じっくり推論・複雑な課題向け"
+          }
+        }
+      }
     }
   },
   "rail": {

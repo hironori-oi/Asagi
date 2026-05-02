@@ -2,38 +2,31 @@
 
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { Send, Brain, Gauge, Square } from 'lucide-react';
+import { Send, Square } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useProjectStore } from '@/lib/stores/project';
 import { useSessionStore } from '@/lib/stores/session';
 import { useUiStore } from '@/lib/stores/ui';
-import {
-  useChatStore,
-  CHAT_DEFAULT_MODEL,
-  CHAT_DEFAULT_EFFORT,
-  type ReasoningEffort,
-} from '@/lib/stores/chat';
+import { useChatStore } from '@/lib/stores/chat';
 import { invoke } from '@/lib/tauri/invoke';
-import { cn } from '@/lib/utils';
 import { SLASH_ITEMS, SlashPalette, type SlashPaletteItem } from './slash-palette';
 import { useCodexContext } from './codex-context';
 
-const FALLBACK_MODELS = ['gpt-5.5-codex', 'gpt-5-codex', 'o4-mini'];
-const EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high'];
-
 /**
- * 入力エリア（AS-115 / AS-117 / AS-120 / AS-144）。
+ * 入力エリア（AS-115 / AS-117 / AS-120 / AS-144 / AS-UX-02）。
  *
  * - 送信時: ChatPane が提供する `CodexContext.send()` に委譲する。
  *   ChatPane 側で appendUser → SQLite create_message (user) → useCodex.sendMessage を順に実行する。
  * - Context が無い場合 (legacy mount) は従来のスタブ応答にフォールバック。
  * - draft が `/` で始まると SlashPalette を表示。Enter で実行。
+ *
+ * AS-UX-02 / DEC-018-037 §②: Model / Effort picker は TrayBar に移管済み。
+ * 本コンポーネントは textarea + send / interrupt のみのシンプル構成にする。
  */
 export function InputArea() {
   const t = useTranslations('chat');
   const tSlash = useTranslations('slash');
-  const tToast = useTranslations('toast');
 
   const activeId = useProjectStore((s) => s.activeProjectId);
   const draft = useChatStore((s) => s.inputDraftByProject[activeId] ?? '');
@@ -41,16 +34,10 @@ export function InputArea() {
   const appendUser = useChatStore((s) => s.appendUser);
   const appendAssistantStub = useChatStore((s) => s.appendAssistantStub);
   const clearChat = useChatStore((s) => s.clear);
-  const model = useChatStore((s) => s.modelByProject[activeId] ?? CHAT_DEFAULT_MODEL);
-  const effort = useChatStore((s) => s.effortByProject[activeId] ?? CHAT_DEFAULT_EFFORT);
-  const setModel = useChatStore((s) => s.setModel);
-  const setEffort = useChatStore((s) => s.setEffort);
 
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const setHelpOpen = useUiStore((s) => s.setHelpOpen);
   const codexCtx = useCodexContext();
-
-  const [models, setModels] = useState<string[]>(FALLBACK_MODELS);
 
   // SlashPalette
   const showSlash = draft.startsWith('/') && !draft.includes('\n');
@@ -60,20 +47,6 @@ export function InputArea() {
   useEffect(() => {
     setSlashIndex(0);
   }, [slashQuery]);
-
-  useEffect(() => {
-    let cancelled = false;
-    invoke<string[]>('codex_get_models')
-      .then((list) => {
-        if (!cancelled && Array.isArray(list) && list.length > 0) setModels(list);
-      })
-      .catch(() => {
-        if (!cancelled) setModels(FALLBACK_MODELS);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   /** SlashPalette からのコマンド実行。 */
   const runSlash = (id: SlashPaletteItem['id']) => {
@@ -167,10 +140,6 @@ export function InputArea() {
   return (
     <div className="border-t border-border bg-surface px-4 py-3">
       <div className="mx-auto flex max-w-3xl flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <ModelSelect models={models} value={model} onChange={(v) => setModel(activeId, v)} t={t} />
-          <EffortSelect value={effort} onChange={(v) => setEffort(activeId, v)} t={t} />
-        </div>
         <div className="relative">
           {showSlash && (
             <SlashPalette
@@ -226,66 +195,4 @@ export function InputArea() {
   );
 }
 
-interface ModelSelectProps {
-  models: string[];
-  value: string;
-  onChange: (v: string) => void;
-  t: (key: string) => string;
-}
-
-function ModelSelect({ models, value, onChange, t }: ModelSelectProps) {
-  return (
-    <label className="flex items-center gap-1.5 text-muted-foreground">
-      <Brain strokeWidth={1.5} className="h-3.5 w-3.5" />
-      <span>{t('model')}:</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded-sm border border-border bg-surface px-1.5 py-0.5 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {models.map((m) => (
-          <option key={m} value={m}>
-            {m}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-interface EffortSelectProps {
-  value: ReasoningEffort;
-  onChange: (v: ReasoningEffort) => void;
-  t: (key: string) => string;
-}
-
-function EffortSelect({ value, onChange, t }: EffortSelectProps) {
-  return (
-    <div className="flex items-center gap-1.5 text-muted-foreground">
-      <Gauge strokeWidth={1.5} className="h-3.5 w-3.5" />
-      <span>{t('effort.label')}:</span>
-      <div role="radiogroup" aria-label={t('effort.label')} className="flex overflow-hidden rounded-sm border border-border">
-        {EFFORTS.map((e) => {
-          const selected = e === value;
-          return (
-            <button
-              key={e}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              onClick={() => onChange(e)}
-              className={cn(
-                'px-2 py-0.5 text-xs transition-colors duration-instant ease-out-expo',
-                selected
-                  ? 'bg-accent/20 text-accent'
-                  : 'bg-transparent text-muted-foreground hover:bg-surface-elevated'
-              )}
-            >
-              {t(`effort.${e}`)}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+// AS-UX-02: ModelSelect / EffortSelect は TrayBar (src/components/layout/tray-bar.tsx) に移管。

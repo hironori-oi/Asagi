@@ -67,6 +67,31 @@
       "branchUnknown": "n/a",
       "quota": "Codex plan",
       "quotaPlan": "{plan}: {remaining}% left"
+    },
+    "traybar": {
+      "label": "Session settings toolbar",
+      "model": {
+        "label": "Model",
+        "aria": "Select model"
+      },
+      "effort": {
+        "label": "Effort",
+        "aria": "Select reasoning effort",
+        "options": {
+          "low": {
+            "label": "low",
+            "desc": "Fast — short responses"
+          },
+          "medium": {
+            "label": "medium",
+            "desc": "Balanced default (recommended)"
+          },
+          "high": {
+            "label": "high",
+            "desc": "Deep reasoning — complex tasks"
+          }
+        }
+      }
     }
   },
   "rail": {
