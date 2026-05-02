@@ -124,7 +124,7 @@
   /* Font sizes (px / rem, 16px base) */
   --text-xs:    11px;   /* 0.6875rem  StatusBar, timestamps */
   --text-sm:    12px;   /* 0.75rem    chips, tags */
-  --text-base:  13px;   /* 0.8125rem  default UI (Sidebar/Inspector) */
+  --text-base:  13px;   /* 0.8125rem  default UI (Sidebar) */
   --text-md:    14px;   /* 0.875rem   chat body, Codex output */
   --text-lg:    16px;   /* 1.0rem     small headings */
   --text-xl:    20px;   /* 1.25rem    section heading */

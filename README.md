@@ -16,16 +16,20 @@
 ```
 +-----------------------------------------------------------------+
 | Asagi  / Project A             [theme] [settings] [_][□][x]    |  ← TitleBar 36px
-+--+-------+----------------------------------------+-------------+
-|  |Sessions|  Codex と日本語で対話                  | Inspector   |
-|R |        |                                        | Context     |
-|a |- 11/02 |  > はじめまして                         | SubAgents   |
-|i |- 11/01 |                                        | Todos       |
-|l |        |                                        |             |
-|  |  [+]   |  [Send]                                |             |
-+--+-------+----------------------------------------+-------------+
++--+-------+------------------------------------------------------+
+|  |Sessions Files Rules Run|  Codex と日本語で対話                |
+|R |                        |                                      |
+|a |- 11/02                 |  > はじめまして                       |
+|i |- 11/01                 |                                      |
+|l |                        |                                      |
+|  |  [+]                   |  [Send]                              |
++--+------------------------+--------------------------------------+
 | gpt-5.5-codex  ctx 38%  branch main  Pro 5x: 92%               |  ← StatusBar 28px
 +-----------------------------------------------------------------+
+
+注: AS-UX-11 (DEC-018-040) で旧 320px 右 Inspector ペインを撤去し、
+Sidebar の 4 タブ（Sessions / Files / Rules / Runtime）に統合済。
+ChatPane が残余幅を占有し、長文 reasoning や token gauge の見通しを向上。
 ```
 
 詳細は `docs/architecture.md` 参照。
@@ -150,7 +154,7 @@ asagi-app/
 │   │   ├── project-rail/        # 48px Slack 風 Rail
 │   │   ├── sidebar/             # SessionList
 │   │   ├── chat/                # ChatPane / InputArea / SlashPalette
-│   │   ├── inspector/           # 320px 右ペイン (3 タブ)
+│   │   # ※ inspector/ は AS-UX-11 (DEC-018-040) で撤去、Sidebar 4 タブに統合済
 │   │   ├── command-palette/     # Ctrl+K cmdk
 │   │   ├── settings/            # vaul Drawer
 │   │   ├── help/                # キーバインド一覧モーダル

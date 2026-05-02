@@ -11,8 +11,8 @@ WCAG 2.1 AA 準拠を目標に audit。
 |---|---|---|
 | フォーカスリング統一 | OK | Tailwind `focus-visible:ring-2 focus-visible:ring-ring` を Button / TitleBar / NewSessionButton / SettingsDrawer / SlashPalette で統一 |
 | キーボードナビゲーション | OK | Tab/Shift+Tab で UI 内移動可。CommandPalette / HelpDialog は Esc で閉じる。SlashPalette は ↑↓ で選択 |
-| ARIA labels | 改善 | 追加: TitleBar の各 button、NewSessionButton、SlashPalette items、Inspector tabs |
-| role 属性 | 改善 | 追加: ChatPane Inspector tabs に `role="tablist"` `role="tab"` `role="tabpanel"` |
+| ARIA labels | 改善 | 追加: TitleBar の各 button、NewSessionButton、SlashPalette items、Sidebar tabs (AS-UX-11 で旧 Inspector tabs を統合) |
+| role 属性 | 改善 | 追加: ChatPane Sidebar tabs に `role="tablist"` `role="tab"` `role="tabpanel"` (AS-UX-11 で旧 Inspector pane を Sidebar 4 タブに統合) |
 | ARIA live regions | 改善 | 追加: ChatPane MessageList を `aria-live="polite"` に (新規メッセージを screen reader が読む) |
 | コントラスト比 | 確認 | StatusBar の小文字 `text-[11px]` は背景 `bg-surface` に対し約 5.2:1 で AA 通過 (oklch(0.65) on oklch(0.18) 相当) |
 | スクリーンリーダー | OK | `<span className="sr-only">` の導入箇所を増やし、icon-only buttons の意味付けを補強 |
@@ -25,7 +25,7 @@ WCAG 2.1 AA 準拠を目標に audit。
 | ファイル | 変更概要 |
 |---|---|
 | `src/components/chat/message-list.tsx` | `aria-live="polite" aria-relevant="additions"` 追加 |
-| `src/components/inspector/inspector.tsx` | tabs に `role="tablist"` `role="tab"` `aria-selected` 追加 |
+| `src/components/sidebar/sidebar.tsx` | tabs に `role="tablist"` `role="tab"` `aria-selected` 追加 (AS-UX-11 で旧 `src/components/inspector/inspector.tsx` を撤去し、Sidebar 4 タブに統合済) |
 | `src/components/sidebar/session-item.tsx` | `aria-current="true"` を active session に |
 | `src/components/error-boundary.tsx` | エラーメッセージを `role="alert"` に |
 | `src/components/help/help-dialog.tsx` | Close ボタンに日本語 `aria-label` (旧 "Close" 英語) |
