@@ -3,11 +3,28 @@
 import { motion } from 'framer-motion';
 import { useTranslations } from 'next-intl';
 import { useProjectStore, PROJECT_COLORS, type RegisteredProject } from '@/lib/stores/project';
+import {
+  useChatActivityStore,
+  type ChatActivityState,
+} from '@/lib/stores/chat-activity';
 import { cn } from '@/lib/utils';
 
 interface ProjectIconProps {
   project: RegisteredProject;
 }
+
+/**
+ * AS-UX-06 / DEC-018-037 §②: 5 状態の色マッピング。
+ * idle = 透明 (dot 自体非表示)、それ以外は明示色。
+ * Tailwind 標準色名で書くと CSS variable に紐づき theme 切替に追随する。
+ */
+const STATUS_DOT_COLOR: Record<ChatActivityState, string | null> = {
+  idle: null,
+  thinking: 'bg-warning',
+  streaming: 'bg-accent',
+  completed: 'bg-success',
+  error: 'bg-destructive',
+};
 
 /**
  * 1 プロジェクトのアイコンボタン。
@@ -24,6 +41,11 @@ export function ProjectIcon({ project }: ProjectIconProps) {
   const isActive = project.id === activeId;
   const color = PROJECT_COLORS[project.colorIdx % PROJECT_COLORS.length];
   const initial = project.title.trim().charAt(0).toUpperCase() || 'P';
+  const activity = useChatActivityStore(
+    (s) => s.stateByProject[project.id] ?? 'idle',
+  );
+  const dotColor = STATUS_DOT_COLOR[activity];
+  const animated = activity === 'thinking' || activity === 'streaming';
 
   return (
     <div className="relative flex w-full items-center justify-center">
@@ -55,6 +77,18 @@ export function ProjectIcon({ project }: ProjectIconProps) {
         }}
       >
         {initial}
+        {dotColor ? (
+          <span
+            data-testid={`project-status-dot-${project.id}`}
+            data-state={activity}
+            aria-hidden
+            className={cn(
+              'absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-surface',
+              dotColor,
+              animated && 'animate-pulse',
+            )}
+          />
+        ) : null}
       </button>
     </div>
   );

@@ -66,7 +66,13 @@
       "branch": "Branch",
       "branchUnknown": "n/a",
       "quota": "Codex plan",
-      "quotaPlan": "{plan}: {remaining}% left"
+      "quotaPlan": "{plan}: {remaining}% left",
+      "activity": {
+        "thinking": "Thinking…",
+        "streaming": "Streaming…",
+        "completed": "Response complete",
+        "error": "Error"
+      }
     },
     "traybar": {
       "label": "Session settings toolbar",

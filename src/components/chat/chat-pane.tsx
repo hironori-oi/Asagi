@@ -8,7 +8,6 @@ import { InputArea } from './input-area';
 import {
   ChatStatusBadge,
   ChatSessionTokenCount,
-  ChatSidecarModeBadge,
 } from './chat-status-badge';
 import { AuthBadge } from './auth-badge';
 import { CodexContext, type CodexContextValue } from './codex-context';
@@ -16,6 +15,7 @@ import { useCodex } from '@/lib/codex/use-codex';
 import { useProjectStore } from '@/lib/stores/project';
 import { useSessionStore } from '@/lib/stores/session';
 import { useChatStore } from '@/lib/stores/chat';
+import { useChatActivityStore, type ChatActivityState } from '@/lib/stores/chat-activity';
 import { invoke } from '@/lib/tauri/invoke';
 
 /**
@@ -65,6 +65,31 @@ export function ChatPane() {
       upsertAssistant(activeId, m.id, m.content);
     }
   }, [codex.messages, activeId, upsertAssistant]);
+
+  // AS-UX-04 / DEC-018-037 §②: useCodex の status / awaitingFirstDelta を
+  // useChatActivityStore に橋渡し（StatusBar Activity summary + ProjectRail dot）。
+  // turn/start → thinking、初回 delta → streaming、turn/completed → completed、
+  // error → error、それ以外 → idle。
+  const syncActivity = useChatActivityStore((s) => s.syncBoth);
+  useEffect(() => {
+    let next: ChatActivityState = 'idle';
+    if (codex.status === 'error') next = 'error';
+    else if (codex.awaitingFirstDelta) next = 'thinking';
+    else if (codex.isStreaming) next = 'streaming';
+    else if (codex.status === 'ready') next = 'idle';
+    syncActivity(activeSessionId, activeId, next);
+  }, [
+    codex.status,
+    codex.isStreaming,
+    codex.awaitingFirstDelta,
+    activeId,
+    activeSessionId,
+    syncActivity,
+  ]);
+
+  // DEC-018-026 ① C: 中断は明示的に completed 寄りの 'idle' へ。
+  // turn/completed の場合は useCodex の awaitingFirstDelta = false かつ
+  // isStreaming = false に落ちて自然に idle 化されるので、そのフローに乗せる。
 
   // 送信ラッパ: appendUser → SQLite create_message → codex.sendMessage
   const send = useCallback(
@@ -132,7 +157,6 @@ export function ChatPane() {
       >
         <header className="flex items-center justify-end gap-2 border-b border-border/40 px-4 py-1.5">
           <ChatSessionTokenCount />
-          <ChatSidecarModeBadge />
           <AuthBadge />
           <ChatStatusBadge />
         </header>

@@ -66,7 +66,13 @@
       "branch": "ブランチ",
       "branchUnknown": "未取得",
       "quota": "Codex プラン",
-      "quotaPlan": "{plan}: 残 {remaining}%"
+      "quotaPlan": "{plan}: 残 {remaining}%",
+      "activity": {
+        "thinking": "考えています…",
+        "streaming": "生成中…",
+        "completed": "応答完了",
+        "error": "エラー"
+      }
     },
     "traybar": {
       "label": "セッション設定ツールバー",

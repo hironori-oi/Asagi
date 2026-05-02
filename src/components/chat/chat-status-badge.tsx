@@ -14,7 +14,6 @@ import { useTranslations } from 'next-intl';
 import { useCodexContext } from './codex-context';
 import { useChatStore } from '@/lib/stores/chat';
 import { useProjectStore } from '@/lib/stores/project';
-import { useSidecarModeStore } from '@/lib/stores/sidecar-mode';
 import { cn } from '@/lib/utils';
 
 const STATUS_DOT: Record<string, string> = {
@@ -51,37 +50,8 @@ export function ChatStatusBadge() {
   );
 }
 
-/**
- * AS-144 / DEC-018-036: 現在の Sidecar mode を表示する小バッジ。
- *
- * - mode 未取得（起動直後 / refresh 失敗）時は何も描画しない（ノイズ抑制）
- * - mock: 中立色、real: アクセント色（浅葱）で UX 上「実 CLI 接続中」を強調
- * - 設定で切替可能なことは tooltip で明示
- */
-export function ChatSidecarModeBadge() {
-  const t = useTranslations('chat.modeBadge');
-  const mode = useSidecarModeStore((s) => s.mode);
-  if (!mode) return null;
-  const isReal = mode === 'real';
-  const label = t(mode);
-  const tooltip = isReal ? t('tooltipReal') : t('tooltipMock');
-  return (
-    <div
-      data-testid="chat-sidecar-mode-badge"
-      data-mode={mode}
-      title={tooltip}
-      aria-label={tooltip}
-      className={cn(
-        'rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-wider',
-        isReal
-          ? 'border-accent/60 bg-accent/15 text-foreground'
-          : 'border-border/60 bg-surface-elevated/60 text-muted-foreground'
-      )}
-    >
-      {label}
-    </div>
-  );
-}
+// AS-UX-03 / DEC-018-037 §②: 旧 ChatSidecarModeBadge は StatusBar
+// (src/components/layout/status-bar.tsx) の SidecarModeBadge に移管した。
 
 /**
  * DEC-018-026 ① B: セッション累計 token 数バッジ。
