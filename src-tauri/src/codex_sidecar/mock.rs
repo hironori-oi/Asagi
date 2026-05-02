@@ -34,8 +34,8 @@ use tokio::time::{sleep, Duration};
 use super::protocol::{
     event, method, AccountInfo, AccountReadResult, ClientCapabilities, ClientInfo,
     CodexNotification, CodexRequest, CodexResponse, InitializeParams, InitializeResult,
-    InputItem, ItemAgentMessageDeltaParams, ThreadInfo, ThreadStartParams, ThreadStartResult,
-    TurnCompletedParams, TurnInfo, TurnStartParams, TurnStartResult,
+    InputItem, ItemAgentMessageDeltaParams, RateLimitBucket, ThreadInfo, ThreadStartParams,
+    ThreadStartResult, TurnCompletedParams, TurnInfo, TurnStartParams, TurnStartResult,
 };
 use super::{CodexSidecar, NOTIFICATION_CHANNEL_CAPACITY};
 
@@ -340,18 +340,59 @@ impl MockCodexSidecar {
         }
 
         match m {
-            method::ACCOUNT_READ => CodexResponse::ok(
-                id,
-                serde_json::to_value(AccountReadResult {
-                    account: Some(AccountInfo {
+            method::ACCOUNT_READ => {
+                // DEC-018-028 QW1 (F3 Auth Watchdog): mock を「契約サーバ」として
+                // 環境変数で挙動切替可能にする。Real 切替時は CLI が同等の状態を
+                // 返却するため Asagi 側の watchdog コードは無修正で済む。
+                if std::env::var("ASAGI_MOCK_FAIL_ACCOUNT_READ").ok().as_deref() == Some("1") {
+                    return CodexResponse::err(
+                        id,
+                        -32099,
+                        "mock account/read forced failure (ASAGI_MOCK_FAIL_ACCOUNT_READ=1)",
+                    );
+                }
+                let force_reauth =
+                    std::env::var("ASAGI_MOCK_FORCE_REAUTH").ok().as_deref() == Some("1");
+                // F2 Rate Limit Dashboard (AS-201) で再利用される 2 bucket のうち
+                // ダミー値を Account にも露出。Real CLI 同様に欠落も許容する。
+                let mut by_id: std::collections::HashMap<String, RateLimitBucket> =
+                    std::collections::HashMap::new();
+                by_id.insert(
+                    "5h_messages".into(),
+                    RateLimitBucket {
+                        used: 12,
+                        limit: 80,
+                        resets_at: 1_727_040_000,
+                    },
+                );
+                by_id.insert(
+                    "weekly_messages".into(),
+                    RateLimitBucket {
+                        used: 4,
+                        limit: 1500,
+                        resets_at: 1_727_308_800,
+                    },
+                );
+
+                let account = if force_reauth {
+                    None
+                } else {
+                    Some(AccountInfo {
                         account_type: "chatgpt".into(),
                         email: Some(MOCK_USER.into()),
                         plan_type: Some(MOCK_PLAN.into()),
-                    }),
-                    requires_openai_auth: false,
-                })
-                .expect("serialize account/read"),
-            ),
+                        rate_limits_by_limit_id: Some(by_id),
+                    })
+                };
+                CodexResponse::ok(
+                    id,
+                    serde_json::to_value(AccountReadResult {
+                        account,
+                        requires_openai_auth: force_reauth,
+                    })
+                    .expect("serialize account/read"),
+                )
+            }
             method::ACCOUNT_LOGIN_START => CodexResponse::ok(
                 id,
                 json!({
@@ -361,13 +402,36 @@ impl MockCodexSidecar {
             ),
             method::ACCOUNT_LOGIN_CANCEL => CodexResponse::ok(id, json!({})),
             method::ACCOUNT_LOGOUT => CodexResponse::ok(id, json!({})),
-            method::ACCOUNT_RATE_LIMITS_READ => CodexResponse::ok(
-                id,
-                json!({
-                    "rateLimits": {"used": 42, "limit": 500},
-                    "rateLimitsByLimitId": {},
-                }),
-            ),
+            method::ACCOUNT_RATE_LIMITS_READ => {
+                // F2 (AS-201) 先行: 2 bucket + resets_at を返す mock。Real CLI も
+                // 同 schema で返却するため Asagi 側 dashboard 実装は本 fixture で
+                // 開発できる (DEC-018-029)。
+                let mut by_id: std::collections::HashMap<String, RateLimitBucket> =
+                    std::collections::HashMap::new();
+                by_id.insert(
+                    "5h_messages".into(),
+                    RateLimitBucket {
+                        used: 12,
+                        limit: 80,
+                        resets_at: 1_727_040_000,
+                    },
+                );
+                by_id.insert(
+                    "weekly_messages".into(),
+                    RateLimitBucket {
+                        used: 4,
+                        limit: 1500,
+                        resets_at: 1_727_308_800,
+                    },
+                );
+                CodexResponse::ok(
+                    id,
+                    serde_json::json!({
+                        "rateLimits": {"used": 42, "limit": 500},
+                        "rateLimitsByLimitId": by_id,
+                    }),
+                )
+            }
             method::MODEL_LIST => CodexResponse::ok(
                 id,
                 json!({

@@ -37,6 +37,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 
 /// JSON-RPC 2.0 リクエスト ID。
 /// 仕様上は string | number | null だが Asagi 内では文字列に正規化する。
@@ -349,6 +350,37 @@ pub struct AccountInfo {
     pub email: Option<String>,
     #[serde(rename = "planType", default, skip_serializing_if = "Option::is_none")]
     pub plan_type: Option<String>,
+    /// DEC-018-028 QW1 / DEC-018-029 (F2 Rate Limit Dashboard 先行定義)。
+    /// `account/rateLimits/read.rateLimitsByLimitId` の型を Account 側にも露出して
+    /// `account/read` レスポンスでの限定的な情報共有も許容する (Real CLI 仕様の
+    /// 互換最大化、リサーチ § 1.1 + § 4.2)。
+    #[serde(rename = "rateLimitsByLimitId", default, skip_serializing_if = "Option::is_none")]
+    pub rate_limits_by_limit_id: Option<HashMap<String, RateLimitBucket>>,
+}
+
+/// DEC-018-028 QW1 / DEC-018-029: F2 Rate Limit Dashboard 用 bucket 型を
+/// QW1 段階で先行定義する。理由:
+///   - リサーチ「主要発見 #2」で確定した「2 bucket (5h_messages + weekly_messages)
+///     を同時カウント」仕様を**型レベルで一度だけ表現**しておくことで、F2 着手時
+///     (AS-201) の実装が「`rateLimitsByLimitId` を読んで UI に流し込む」だけで
+///     済む状態にする (Quick Win 設計の連鎖効果)。
+///   - `account/read` と `account/rateLimits/read` の双方が同型を返却し得るため、
+///     共通型を別箇所に切り出す (重複定義回避)。
+///
+/// 想定 schema (リサーチ v2 § 1.1 + DEC-018-029):
+/// ```json
+/// {
+///   "5h_messages":     { "used": 12, "limit": 80,   "resets_at": 1727040000 },
+///   "weekly_messages": { "used": 4,  "limit": 1500, "resets_at": 1727308800 }
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RateLimitBucket {
+    pub used: u64,
+    pub limit: u64,
+    /// Unix epoch seconds (リサーチ § 1.1 確定: resetsAt は seconds-precision)。
+    #[serde(rename = "resets_at", alias = "resetsAt")]
+    pub resets_at: i64,
 }
 
 // ---------------------------------------------------------------

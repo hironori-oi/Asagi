@@ -113,6 +113,13 @@
       "ready": "待機中",
       "streaming": "生成中…",
       "error": "エラー"
+    },
+    "auth": {
+      "unknown": "認証 確認中",
+      "authenticated": "認証 OK",
+      "requires_reauth": "再ログイン必要",
+      "error": "認証 取得失敗",
+      "checkNow": "今すぐ確認"
     }
   },
   "inspector": {

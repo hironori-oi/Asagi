@@ -90,3 +90,67 @@ export async function getSidecarStatus(projectId: string): Promise<AccountReadRe
   }
   return validated;
 }
+
+// --------------------------------------------------------------------------
+// DEC-018-028 QW1 (F3 Auth Watchdog) Tauri command wrappers
+// --------------------------------------------------------------------------
+
+/**
+ * Rust 側 `AuthState` (serde tag = "kind", snake_case) と一致する判別 union。
+ * Real impl 切替後も schema は不変。
+ */
+export type AuthWatchdogState =
+  | { kind: 'unknown' }
+  | {
+      kind: 'authenticated';
+      last_checked_unix: number;
+      plan: string;
+      user: string;
+    }
+  | {
+      kind: 'requires_reauth';
+      detected_at_unix: number;
+      reason: string;
+    }
+  | {
+      kind: 'error';
+      last_error: string;
+      since_unix: number;
+    };
+
+/**
+ * Rust `AuthStateChangedPayload` と一致する event payload。
+ * Tauri event `auth:{projectId}:state_changed` で受信する。
+ */
+export interface AuthStateChangedPayload {
+  from: string;
+  to: string;
+  state: AuthWatchdogState;
+  reason: string;
+}
+
+export const AuthEvents = {
+  stateChanged: (projectId: string) => `auth:${projectId}:state_changed`,
+} as const;
+
+/** Watchdog start (idempotent)。lib.rs で自動起動するが UI からも操作可能。 */
+export async function authWatchdogStart(): Promise<void> {
+  await invoke<void>('auth_watchdog_start');
+}
+
+/** Watchdog stop (idempotent)。 */
+export async function authWatchdogStop(): Promise<void> {
+  await invoke<void>('auth_watchdog_stop');
+}
+
+/** UI の「今すぐ確認」ボタン用。state 変化があれば event で通知。 */
+export async function authWatchdogForceCheck(projectId: string): Promise<void> {
+  await invoke<void>('auth_watchdog_force_check', { projectId });
+}
+
+/** 現在の AuthState を取得（UI 起動時の seed）。 */
+export async function authWatchdogGetState(
+  projectId: string,
+): Promise<AuthWatchdogState> {
+  return invoke<AuthWatchdogState>('auth_watchdog_get_state', { projectId });
+}

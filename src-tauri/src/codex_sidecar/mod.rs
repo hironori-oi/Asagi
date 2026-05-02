@@ -24,6 +24,7 @@ use async_trait::async_trait;
 use std::str::FromStr;
 use tokio::sync::broadcast;
 
+pub mod auth_watchdog;
 pub mod mock;
 pub mod mock_server;
 pub mod multi;

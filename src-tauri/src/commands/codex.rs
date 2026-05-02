@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Emitter, Runtime};
 
+use crate::codex_sidecar::auth_watchdog::AuthState;
 use crate::codex_sidecar::mock::make_turn_start_request;
 use crate::codex_sidecar::protocol::{
     method, CodexNotification, ThreadStartResult, TurnStartResult,
@@ -242,4 +243,59 @@ pub async fn agent_interrupt(
         return Err(format!("codex error: {} ({})", err.message, err.code));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------
+// DEC-018-028 QW1 (F3 Auth Watchdog) Tauri commands
+// ---------------------------------------------------------------------
+
+/// Watchdog start (idempotent)。lib.rs setup() で起動するが、
+/// 環境変数 `ASAGI_AUTH_WATCHDOG_DISABLED=1` で抑止された場合に
+/// 後から UI 操作で起動できるようにも開放する。
+#[tauri::command]
+pub async fn auth_watchdog_start(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut guard = state.auth_watchdog.write().await;
+    if let Some(w) = guard.as_mut() {
+        w.start();
+    }
+    Ok(())
+}
+
+/// Watchdog stop (idempotent)。
+#[tauri::command]
+pub async fn auth_watchdog_stop(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut guard = state.auth_watchdog.write().await;
+    if let Some(w) = guard.as_mut() {
+        w.stop();
+    }
+    Ok(())
+}
+
+/// 即時 1 回 polling を実行。UI の「今すぐ確認」ボタンから呼ぶ。
+/// 結果は `auth:{projectId}:state_changed` event で通知される。
+#[tauri::command]
+pub async fn auth_watchdog_force_check(
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+) -> Result<(), String> {
+    let guard = state.auth_watchdog.read().await;
+    let w = guard
+        .as_ref()
+        .ok_or_else(|| "AuthWatchdog not initialized".to_string())?;
+    w.force_check_now(&project_id)
+        .await
+        .map_err(|e| format!("force_check failed: {e:#}"))
+}
+
+/// 現在の AuthState を取得 (UI 起動時の seed)。未 polled の場合は Unknown。
+#[tauri::command]
+pub async fn auth_watchdog_get_state(
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+) -> Result<AuthState, String> {
+    let guard = state.auth_watchdog.read().await;
+    let w = guard
+        .as_ref()
+        .ok_or_else(|| "AuthWatchdog not initialized".to_string())?;
+    Ok(w.get_state(&project_id).await)
 }

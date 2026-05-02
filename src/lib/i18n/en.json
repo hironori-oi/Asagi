@@ -113,6 +113,13 @@
       "ready": "ready",
       "streaming": "streaming…",
       "error": "error"
+    },
+    "auth": {
+      "unknown": "Auth checking",
+      "authenticated": "Auth OK",
+      "requires_reauth": "Re-login required",
+      "error": "Auth check failed",
+      "checkNow": "Check now"
     }
   },
   "inspector": {

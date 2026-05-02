@@ -1,0 +1,126 @@
+/**
+ * useAuthWatchdog hook tests (DEC-018-028 QW1 / F3)。
+ *
+ * Tauri invoke / event はグローバル mock 済み (vitest.setup.ts) なので、
+ * ここでは個別に tauri モジュールを stub し直して seed と event を制御する。
+ */
+
+import { renderHook, act, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// --- module-level mocks: must be set before importing the hook ----
+const mockInvoke = vi.fn();
+const mockListen = vi.fn();
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (...args: unknown[]) => mockInvoke(...args),
+}));
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: (...args: unknown[]) => mockListen(...args),
+}));
+
+import { useAuthWatchdog } from '../use-auth-watchdog';
+import type {
+  AuthStateChangedPayload,
+  AuthWatchdogState,
+} from '../sidecar-client';
+
+beforeEach(() => {
+  mockInvoke.mockReset();
+  mockListen.mockReset();
+});
+
+describe('useAuthWatchdog', () => {
+  it('seed が unknown のときは isAuthenticated=false / requiresReauth=false', async () => {
+    const seed: AuthWatchdogState = { kind: 'unknown' };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'auth_watchdog_get_state') return seed;
+      return undefined;
+    });
+    mockListen.mockResolvedValue(() => {});
+
+    const { result } = renderHook(() => useAuthWatchdog('p-1'));
+    await waitFor(() => {
+      expect(result.current.kind).toBe('unknown');
+    });
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.requiresReauth).toBe(false);
+    expect(result.current.isError).toBe(false);
+  });
+
+  it('event で requires_reauth payload を受信すると requiresReauth=true になる', async () => {
+    const seed: AuthWatchdogState = {
+      kind: 'authenticated',
+      last_checked_unix: 1727040000,
+      plan: 'mock-pro-5x',
+      user: 'mock-user',
+    };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'auth_watchdog_get_state') return seed;
+      return undefined;
+    });
+
+    // listen が登録した handler を捕捉して、後で手動発火する
+    let handler: ((e: { payload: AuthStateChangedPayload }) => void) | null =
+      null;
+    mockListen.mockImplementation((_name: string, h: typeof handler) => {
+      handler = h;
+      return Promise.resolve(() => {});
+    });
+
+    const { result } = renderHook(() => useAuthWatchdog('p-2'));
+    await waitFor(() => {
+      expect(result.current.isAuthenticated).toBe(true);
+    });
+
+    // 認証エラーへ遷移
+    const payload: AuthStateChangedPayload = {
+      from: 'authenticated',
+      to: 'requires_reauth',
+      state: {
+        kind: 'requires_reauth',
+        detected_at_unix: 1727050000,
+        reason: 'account/read returned requires_openai_auth=true',
+      },
+      reason: 'account/read returned requires_openai_auth=true',
+    };
+    await act(async () => {
+      handler?.({ payload });
+    });
+    await waitFor(() => {
+      expect(result.current.requiresReauth).toBe(true);
+    });
+    expect(result.current.kind).toBe('requires_reauth');
+    expect(result.current.lastChange?.from).toBe('authenticated');
+    expect(result.current.lastChange?.to).toBe('requires_reauth');
+  });
+
+  it('forceCheck が auth_watchdog_force_check invoke を発火する', async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'auth_watchdog_get_state') {
+        return { kind: 'unknown' } satisfies AuthWatchdogState;
+      }
+      if (cmd === 'auth_watchdog_force_check') return undefined;
+      return undefined;
+    });
+    mockListen.mockResolvedValue(() => {});
+
+    const { result } = renderHook(() => useAuthWatchdog('p-3'));
+    await waitFor(() => {
+      // seed 完了を待つ
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'auth_watchdog_get_state',
+        expect.objectContaining({ projectId: 'p-3' }),
+      );
+    });
+
+    await act(async () => {
+      await result.current.forceCheck();
+    });
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'auth_watchdog_force_check',
+      expect.objectContaining({ projectId: 'p-3' }),
+    );
+  });
+});

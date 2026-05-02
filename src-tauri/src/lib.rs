@@ -7,6 +7,7 @@
 
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
+use tokio::sync::RwLock;
 
 pub mod auth;
 pub mod codex_sidecar;
@@ -19,6 +20,7 @@ pub mod project;
 pub mod session;
 pub mod settings;
 
+use crate::codex_sidecar::auth_watchdog::{AuthWatchdog, ENV_WATCHDOG_DISABLED};
 use crate::codex_sidecar::multi::MultiSidecarManager;
 
 /// アプリ全体で共有する状態。
@@ -27,6 +29,9 @@ pub struct AppState {
     pub db: Mutex<Option<rusqlite::Connection>>,
     /// Multi-Sidecar Manager (AS-134)。mock / real を sidecar_mode で切替。
     pub multi: Arc<MultiSidecarManager>,
+    /// DEC-018-028 QW1 (F3 Auth Watchdog)。`WatchdogEmitter` trait で
+    /// emitter を抽象化したため、generic param は不要。
+    pub auth_watchdog: Arc<RwLock<Option<AuthWatchdog>>>,
 }
 
 impl Default for AppState {
@@ -34,6 +39,7 @@ impl Default for AppState {
         Self {
             db: Mutex::new(None),
             multi: Arc::new(MultiSidecarManager::new()),
+            auth_watchdog: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -77,6 +83,26 @@ pub fn run() {
                     tracing::error!("failed to initialize database: {e:#}");
                 }
             }
+
+            // DEC-018-028 QW1: F3 Auth Watchdog 起動。
+            // 環境変数 `ASAGI_AUTH_WATCHDOG_DISABLED=1` で抑止可能。
+            // Real impl 切替時は MultiSidecarManager 配下が RealCodexSidecar に
+            // 変わるだけで本 watchdog コードは無修正で動く (差し替え 1 箇所原則)。
+            let disabled = std::env::var(ENV_WATCHDOG_DISABLED).ok().as_deref() == Some("1");
+            if disabled {
+                tracing::info!("AuthWatchdog disabled by ASAGI_AUTH_WATCHDOG_DISABLED=1");
+            } else {
+                let multi = state.multi.clone();
+                let app_handle = app.handle().clone();
+                let watchdog_slot = state.auth_watchdog.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut w = AuthWatchdog::with_tauri(multi, app_handle);
+                    w.start();
+                    let mut guard = watchdog_slot.write().await;
+                    *guard = Some(w);
+                    tracing::info!("AuthWatchdog started (default 5min polling)");
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -107,6 +133,11 @@ pub fn run() {
             commands::codex::agent_status,
             // DEC-018-026 ① C: turn 中断
             commands::codex::agent_interrupt,
+            // DEC-018-028 QW1 (F3 Auth Watchdog) commands
+            commands::codex::auth_watchdog_start,
+            commands::codex::auth_watchdog_stop,
+            commands::codex::auth_watchdog_force_check,
+            commands::codex::auth_watchdog_get_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Asagi application");

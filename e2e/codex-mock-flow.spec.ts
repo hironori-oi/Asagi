@@ -335,6 +335,20 @@ test.describe('@codex-mock-ux DEC-018-026 ① ChatPane UX polish', () => {
               return handleAgentInterrupt(payload!.args as { project_id: string; thread_id?: string; turn_id?: string });
             case 'agent_status':
               return { account: null, requiresOpenaiAuth: true };
+            // DEC-018-028 QW1 (F3 Auth Watchdog) — UI 起動時の seed のみ。
+            // 本 E2E では state_changed event 自体は発火しないが、AuthBadge の
+            // 描画が落ちないことを確認する。
+            case 'auth_watchdog_get_state':
+              return {
+                kind: 'authenticated',
+                last_checked_unix: 1727040000,
+                plan: 'mock-pro-5x',
+                user: 'mock-user@asagi.local',
+              };
+            case 'auth_watchdog_force_check':
+            case 'auth_watchdog_start':
+            case 'auth_watchdog_stop':
+              return null;
             case 'codex_get_models':
               return ['gpt-5.5-codex', 'gpt-5-codex', 'o4-mini'];
             case 'create_message':
@@ -373,6 +387,11 @@ test.describe('@codex-mock-ux DEC-018-026 ① ChatPane UX polish', () => {
     await expect(statusBadge).toBeVisible({ timeout: 10000 });
     // sidecar spawn → ready
     await expect(statusBadge).toHaveAttribute('data-status', 'ready', { timeout: 10000 });
+
+    // DEC-018-028 QW1 (F3 Auth Watchdog): seed が authenticated で AuthBadge が緑表示。
+    const authBadge = page.getByTestId('auth-badge');
+    await expect(authBadge).toBeVisible({ timeout: 5000 });
+    await expect(authBadge).toHaveAttribute('data-auth', 'authenticated');
 
     // 1) send → typing indicator が出る (最初の delta が 200ms 後)
     const textarea = page.getByTestId('chat-input-textarea');
