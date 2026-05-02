@@ -30,7 +30,15 @@ pub fn db_init(state: tauri::State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+// AS-CLEAN-11 (DEC-018-043): Tauri frontend は invoke args に camelCase
+// (`projectId` / `sessionId` 等) を送信する規約のため、本 module の全 *Args
+// struct に `#[serde(rename_all = "camelCase")]` を統一適用する。
+// 未指定だと session 一覧 / message CRUD が常時 None / 空表示になる
+// (発覚: 2026-05-03 owner smoke、SessionsTab に「DB 未接続」誤表示)。
+// commands/codex.rs は別 convention (sidecar-client.ts が snake_case 送信)
+// のため本 module のみ修正、codex.rs 統一は AS-CLEAN-13 (M1.1 backlog) で実施。
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateSessionArgs {
     pub title: String,
     #[serde(default = "default_project")]
@@ -52,6 +60,7 @@ pub fn create_session(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListSessionsArgs {
     #[serde(default)]
     pub project_id: Option<String>,
@@ -94,6 +103,7 @@ pub fn delete_session(state: tauri::State<AppState>, args: SessionIdArgs) -> Res
 // --------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateMessageArgs {
     pub session_id: String,
     pub role: String,
@@ -111,6 +121,7 @@ pub fn create_message(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListMessagesArgs {
     pub session_id: String,
 }

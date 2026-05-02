@@ -164,7 +164,6 @@
       "medium": "medium",
       "high": "high"
     },
-    "stub": "[stub] Codex 統合は POC 通過後に実装",
     "saveFailed": "メッセージ保存に失敗しました",
     "interruptFailed": "中断に失敗しました",
     "clearedToast": "セッションをクリアしました",

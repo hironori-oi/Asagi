@@ -164,7 +164,6 @@
       "medium": "medium",
       "high": "high"
     },
-    "stub": "[stub] Codex integration ships after the POC clears.",
     "saveFailed": "Failed to save message",
     "interruptFailed": "Failed to interrupt",
     "clearedToast": "Session cleared",

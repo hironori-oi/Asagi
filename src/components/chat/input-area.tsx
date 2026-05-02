@@ -189,7 +189,8 @@ export function InputArea() {
             </Button>
           </div>
         </div>
-        <p className="text-[11px] text-muted-foreground">{t('stub')}</p>
+        {/* AS-CLEAN-12 (DEC-018-043): Phase 0 POC 通過後も残存していた `[stub] Codex 統合は POC 通過後に実装` */}
+        {/* ヒントを M1 Real impl 進行に伴い削除。i18n の `chat.stub` キーも併せて撤去。 */}
       </div>
     </div>
   );
