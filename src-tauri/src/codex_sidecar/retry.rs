@@ -147,14 +147,10 @@ mod tests {
     #[test]
     fn next_sleep_converges_to_cap() {
         let p = RetryPolicy::for_test(); // base=10, cap=100
-        // last_sleep を cap より十分大きい値で何度回しても cap 内に収まる
+                                         // last_sleep を cap より十分大きい値で何度回しても cap 内に収まる
         for _ in 0..500 {
             let s = p.next_sleep_ms(10_000);
-            assert!(
-                s <= p.cap_ms,
-                "must be capped: got={s} cap={}",
-                p.cap_ms
-            );
+            assert!(s <= p.cap_ms, "must be capped: got={s} cap={}", p.cap_ms);
             assert!(s >= p.base_ms);
         }
     }

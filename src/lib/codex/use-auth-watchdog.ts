@@ -40,6 +40,18 @@ export type AuthKind = AuthWatchdogState['kind'];
  */
 const FORCE_CHECK_DEBOUNCE_MS = 500;
 
+/**
+ * AS-HOTFIX-QW4 (DEC-018-046 carryover): 「再ログイン」CTA 連打時に
+ * `account/login/start` JSON-RPC が並行実行され、Rust 側 sidecar に
+ *   - "no sidecar for project_id: ..." (idle reaper kill 後)
+ *   - 同一 OAuth flow の重複起動による IDP 側 nonce 衝突
+ * を起こすのを防ぐ trailing-edge debounce。
+ *
+ * forceCheck と同様の shared Promise pattern で 500ms 沈静化後に 1 度だけ invoke する。
+ * 新規 dep 追加禁止 (DEC-018-045 ⑦) のため lodash を使わず手書き setTimeout で実装。
+ */
+const OPEN_LOGIN_DEBOUNCE_MS = 500;
+
 export interface UseAuthWatchdogResult {
   /** 現在の AuthState (`unknown` 初期値)。 */
   state: AuthWatchdogState;
@@ -188,6 +200,14 @@ export function useAuthWatchdog(projectId: string): UseAuthWatchdogResult {
     [],
   );
 
+  // AS-HOTFIX-QW4 (DEC-018-046 carryover): openLogin 用の独立した debounce ref。
+  //   - forceCheck (`account/read` polling 抑制) とは別 invoke (`account/login/start` 抑制)
+  //   - 共有してしまうと一方の連打が他方を窒息させてしまうため Ref を分離
+  //   - shared Promise pattern も独立に保持し、leak を防ぐ
+  const openLoginTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openLoginPendingPromiseRef = useRef<Promise<void> | null>(null);
+  const openLoginPendingResolveRef = useRef<(() => void) | null>(null);
+
   // unmount / projectId 切替時に pending timer をクリア + pending Promise を resolve
   // (Rust 側 in_flight Mutex とは独立したフロント安全網。古い projectId の pending invoke を破棄。)
   useEffect(() => {
@@ -201,13 +221,57 @@ export function useAuthWatchdog(projectId: string): UseAuthWatchdogResult {
       pendingPromiseRef.current = null;
       pendingResolveRef.current = null;
       resolve?.();
+      // openLogin 側も同様にクリア
+      if (openLoginTimerRef.current !== null) {
+        clearTimeout(openLoginTimerRef.current);
+        openLoginTimerRef.current = null;
+      }
+      const openResolve = openLoginPendingResolveRef.current;
+      openLoginPendingPromiseRef.current = null;
+      openLoginPendingResolveRef.current = null;
+      openResolve?.();
     };
   }, [projectId]);
 
-  const openLogin = useCallback(async () => {
-    if (!projectId) return;
-    await authOpenLogin(projectId);
-  }, [projectId]);
+  // AS-HOTFIX-QW4 (DEC-018-046 carryover): openLogin の trailing-edge debounce。
+  // 設計は forceCheck と同一だが ref を分離し、相互窒息を防ぐ。
+  //   - 連打中は **最後の 1 回のみ** 500ms 後に `account/login/start` を invoke
+  //   - 共有 Promise を全 caller に返し、trailing 発火時に一括 resolve (leak 防止)
+  //   - invoke 失敗は logger.warn で握りつぶす（authBadge 側で error toast 表示は別経路）
+  //   - forceCheck と違い `useMemo([])` ではなく `useCallback([projectId])` を用い、
+  //     projectId 切替直後の stale closure を防ぐ（実質的には ref 経由で解決済みだが念のため）
+  const openLogin = useCallback((): Promise<void> => {
+    if (openLoginTimerRef.current !== null) {
+      clearTimeout(openLoginTimerRef.current);
+      openLoginTimerRef.current = null;
+    }
+    const pid = latestProjectIdRef.current;
+    if (!pid) {
+      return Promise.resolve();
+    }
+    if (openLoginPendingPromiseRef.current === null) {
+      openLoginPendingPromiseRef.current = new Promise<void>((resolve) => {
+        openLoginPendingResolveRef.current = resolve;
+      });
+    }
+    const sharedPromise = openLoginPendingPromiseRef.current;
+    openLoginTimerRef.current = setTimeout(() => {
+      openLoginTimerRef.current = null;
+      const resolve = openLoginPendingResolveRef.current;
+      openLoginPendingPromiseRef.current = null;
+      openLoginPendingResolveRef.current = null;
+      authOpenLogin(pid)
+        .catch(() => {
+          /* swallow: 失敗は authBadge 側 onClick の logger.warn で記録される。
+             debounce 内で throw すると shared Promise が reject され、他 caller に
+             副作用が波及するため、ここでは握りつぶし、Promise 1 本だけ resolve する */
+        })
+        .finally(() => {
+          resolve?.();
+        });
+    }, OPEN_LOGIN_DEBOUNCE_MS);
+    return sharedPromise;
+  }, []);
 
   // DEC-018-045 QW1 (AS-200.3): expiry warning derived state。
   // Authenticated 以外では false 固定 (`requiresReauth` / `isError` が優先される)。

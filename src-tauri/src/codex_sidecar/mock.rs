@@ -733,9 +733,7 @@ mod tests {
     #[tokio::test]
     async fn mock_account_read_after_initialized() {
         // env を触る test と process 横断で直列化（AS-200.2）
-        let _g = ENV_TEST_LOCK()
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _g = ENV_TEST_LOCK().lock().unwrap_or_else(|p| p.into_inner());
         // 他 test の残留を防御的に除去
         std::env::remove_var("ASAGI_MOCK_FORCE_REAUTH");
         std::env::remove_var("ASAGI_MOCK_FORCE_NO_EXPIRY");
@@ -754,7 +752,9 @@ mod tests {
 
         // DEC-018-045 QW1 (AS-200.1): expiry が同梱されること。
         // default は now + 60min なので、now + 30min < expiry < now + 65min。
-        let expiry = r.access_token_expires_at.expect("expiry must be present in mock");
+        let expiry = r
+            .access_token_expires_at
+            .expect("expiry must be present in mock");
         let now_unix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -773,9 +773,7 @@ mod tests {
     /// expiry warning logic は走らない fail-soft 経路を担保。）
     #[tokio::test]
     async fn mock_account_read_force_reauth_returns_none_expiry() {
-        let _g = ENV_TEST_LOCK()
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _g = ENV_TEST_LOCK().lock().unwrap_or_else(|p| p.into_inner());
         // 他 test の残留を防御的に除去
         std::env::remove_var("ASAGI_MOCK_FORCE_NO_EXPIRY");
         std::env::remove_var("ASAGI_MOCK_EXPIRY_IN_SECS");
@@ -796,9 +794,7 @@ mod tests {
     /// DEC-018-045 QW1 (AS-200.1): ASAGI_MOCK_EXPIRY_IN_SECS で短縮可能。
     #[tokio::test]
     async fn mock_account_read_supports_short_expiry_via_env() {
-        let _g = ENV_TEST_LOCK()
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _g = ENV_TEST_LOCK().lock().unwrap_or_else(|p| p.into_inner());
         // 他 test の残留を防御的に除去
         std::env::remove_var("ASAGI_MOCK_FORCE_REAUTH");
         std::env::remove_var("ASAGI_MOCK_FORCE_NO_EXPIRY");

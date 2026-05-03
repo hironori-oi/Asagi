@@ -223,7 +223,10 @@ mod tests {
         assert_eq!(SIDECAR_IDLE_THRESHOLD_SECS, 1800);
         // 1 分 polling
         assert_eq!(SIDECAR_IDLE_REAPER_INTERVAL_SECS, 60);
-        assert_eq!(ENV_SIDECAR_IDLE_THRESHOLD_MS, "ASAGI_SIDECAR_IDLE_THRESHOLD_MS");
+        assert_eq!(
+            ENV_SIDECAR_IDLE_THRESHOLD_MS,
+            "ASAGI_SIDECAR_IDLE_THRESHOLD_MS"
+        );
         assert_eq!(
             ENV_SIDECAR_IDLE_REAPER_INTERVAL_MS,
             "ASAGI_SIDECAR_IDLE_REAPER_INTERVAL_MS"

@@ -107,9 +107,7 @@ pub fn run() {
             let reaper_disabled =
                 std::env::var(ENV_IDLE_REAPER_DISABLED).ok().as_deref() == Some("1");
             if reaper_disabled {
-                tracing::info!(
-                    "Sidecar idle reaper disabled by {ENV_IDLE_REAPER_DISABLED}=1"
-                );
+                tracing::info!("Sidecar idle reaper disabled by {ENV_IDLE_REAPER_DISABLED}=1");
             } else {
                 let multi_for_reaper = state.multi.clone();
                 let app_for_reaper = app.handle().clone();
@@ -120,8 +118,7 @@ pub fn run() {
                 //  実機 setup() 経路を踏む smoke で初検出 — DEC-018-046 厳守事項 ⓕ 起票)
                 tauri::async_runtime::spawn(async move {
                     let started = multi_for_reaper.start_idle_reaper(move |pid: &str| {
-                        let event_name =
-                            format!("agent:{pid}:{AGENT_IDLE_SHUTDOWN_EVENT_SUFFIX}");
+                        let event_name = format!("agent:{pid}:{AGENT_IDLE_SHUTDOWN_EVENT_SUFFIX}");
                         if let Err(e) = app_for_reaper.emit(&event_name, pid.to_string()) {
                             tracing::warn!("emit {event_name} failed: {e}");
                         } else {
@@ -129,9 +126,7 @@ pub fn run() {
                         }
                     });
                     if started {
-                        tracing::info!(
-                            "Sidecar idle reaper started (default 30min threshold)"
-                        );
+                        tracing::info!("Sidecar idle reaper started (default 30min threshold)");
                     }
                 });
             }

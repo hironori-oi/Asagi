@@ -291,9 +291,7 @@ impl AuthWatchdog {
                                 let now_unix = to_unix_seconds(SystemTime::now());
                                 let access_expires_at_unix = r.access_token_expires_at;
                                 let expiry_warning = match access_expires_at_unix {
-                                    Some(exp) => {
-                                        now_unix + EXPIRY_WARNING_THRESHOLD_SECS >= exp
-                                    }
+                                    Some(exp) => now_unix + EXPIRY_WARNING_THRESHOLD_SECS >= exp,
                                     None => false,
                                 };
                                 AuthState::Authenticated {

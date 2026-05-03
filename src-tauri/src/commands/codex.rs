@@ -19,6 +19,8 @@
 //! Tauri v2 の event 名バリデーション (`tauri::event::event_name::is_event_name_valid`)
 //! は `[a-zA-Z0-9-_:/]+` を許容するため `/` を含む event 名を直接 emit 可能。
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Emitter, Runtime};
@@ -28,6 +30,7 @@ use crate::codex_sidecar::contract::{
     AGENT_LAZY_SPAWN_EVENT_SUFFIX, AGENT_SPAWN_RETRY_EVENT_SUFFIX,
 };
 use crate::codex_sidecar::mock::make_turn_start_request;
+use crate::codex_sidecar::multi::MultiSidecarManager;
 use crate::codex_sidecar::protocol::{
     method, CodexNotification, ThreadStartResult, TurnStartResult,
 };
@@ -88,8 +91,7 @@ pub async fn agent_spawn_sidecar<R: Runtime>(
     let pid_for_cb = project_id.clone();
     let app_for_cb = app.clone();
     let on_attempt = move |a: SpawnAttempt| {
-        let event_name =
-            format!("agent:{pid_for_cb}:{}", AGENT_SPAWN_RETRY_EVENT_SUFFIX);
+        let event_name = format!("agent:{pid_for_cb}:{}", AGENT_SPAWN_RETRY_EVENT_SUFFIX);
         let payload: SpawnAttemptEventPayload = a.into();
         if let Err(e) = app_for_cb.emit(&event_name, payload) {
             tracing::warn!("emit {event_name} failed: {e}");
@@ -175,6 +177,97 @@ pub struct LazySpawnEventPayload {
     pub reason: &'static str,
 }
 
+/// AS-HOTFIX-QW4 (DEC-018-046 carryover): lazy spawn パターンを共通化する helper。
+///
+/// **目的**: sidecar が居ないときに JSON-RPC を投げると "no sidecar for project_id"
+/// で fail する問題を、全 user-facing entrypoint で同一の保護で覆う。
+///
+/// **抽出元**: `agent_send_message_v2` (chat 送信) で先行実装されていた lazy spawn
+/// fallback。AS-HOTFIX-QW4 で `auth_open_login` (再ログイン CTA) にも同じ保護を
+/// 適用する必要が出たため、両方が同じバグの再現を生まないよう helper 化した。
+///
+/// **動作**:
+///   1. `multi.is_active(pid)` が `false` のときのみ以下を実行（true なら no-op で即 return）
+///   2. `agent:{pid}:lazy-spawn` event を 1 回 emit (UI に「自動再接続中」状態を出させる)
+///   3. retry 試行ごとに `agent:{pid}:spawn-retry` を emit
+///   4. `multi.spawn_for_with_retry(...)` で再接続を試みる（既定 RetryPolicy）
+///   5. **新規生成**された場合（`Ok(true)`）のみ notification pump task を起動
+///      （冪等 spawn の二重 pump 起動を回避: AS-UX-FIX-A / DEC-018-039 W1 と同根の対策）
+///
+/// **failure mode**:
+///   - `spawn_for_with_retry` が `Err` → `"lazy spawn failed: ..."` で `Err` を返す
+///   - 呼び出し側はこの Err を user 向け toast / log に流す責務を負う
+async fn ensure_sidecar_with_lazy_spawn<R: Runtime>(
+    app: AppHandle<R>,
+    multi: Arc<MultiSidecarManager>,
+    mode: SidecarMode,
+    project_id: String,
+    reason: &'static str,
+) -> Result<(), String> {
+    if multi.is_active(&project_id).await {
+        return Ok(());
+    }
+
+    // (2) lazy-spawn event を 1 回 emit
+    let lazy_event = format!("agent:{project_id}:{}", AGENT_LAZY_SPAWN_EVENT_SUFFIX);
+    let payload = LazySpawnEventPayload {
+        project_id: project_id.clone(),
+        reason,
+    };
+    if let Err(e) = app.emit(&lazy_event, payload) {
+        tracing::warn!("emit {lazy_event} failed: {e}");
+    }
+
+    // (3) retry callback: spawn-retry event
+    let pid_for_cb = project_id.clone();
+    let app_for_cb = app.clone();
+    let on_attempt = move |a: SpawnAttempt| {
+        let event_name = format!("agent:{pid_for_cb}:{}", AGENT_SPAWN_RETRY_EVENT_SUFFIX);
+        let payload: SpawnAttemptEventPayload = a.into();
+        if let Err(e) = app_for_cb.emit(&event_name, payload) {
+            tracing::warn!("emit {event_name} failed: {e}");
+        }
+    };
+
+    // (4) spawn (retry policy default)
+    let newly_created = multi
+        .spawn_for_with_retry(project_id.clone(), mode, RetryPolicy::default(), on_attempt)
+        .await
+        .map_err(|e| format!("lazy spawn failed: {e:#}"))?;
+
+    // (5) newly_created なら notification pump task を起動
+    if newly_created {
+        let multi_for_pump = multi.clone();
+        let pid_for_pump = project_id.clone();
+        let app_for_pump = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut rx = match multi_for_pump.subscribe(&pid_for_pump).await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("lazy spawn subscribe failed for {pid_for_pump}: {e:#}");
+                    return;
+                }
+            };
+            loop {
+                match rx.recv().await {
+                    Ok(n) => forward_notification(&app_for_pump, &pid_for_pump, &n),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            "lazy spawn notification lagged for {pid_for_pump}, dropped {n}"
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::info!("lazy spawn notification stream closed for {pid_for_pump}");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    Ok(())
+}
+
 /// turn 1 ターン開始。Real protocol に準拠して
 /// 1. thread_id 未指定なら thread/start
 /// 2. turn/start 即時 inProgress を取得
@@ -195,69 +288,17 @@ pub async fn agent_send_message_v2<R: Runtime>(
     args: AgentSendMessageArgs,
 ) -> Result<AgentSendMessageResult, String> {
     // 0. lazy spawn: sidecar が居なければ自動再接続（QW3 AS-202.2）
-    if !state.multi.is_active(&args.project_id).await {
-        let lazy_event = format!(
-            "agent:{}:{}",
-            args.project_id, AGENT_LAZY_SPAWN_EVENT_SUFFIX
-        );
-        let payload = LazySpawnEventPayload {
-            project_id: args.project_id.clone(),
-            reason: "sidecar_inactive",
-        };
-        if let Err(e) = app.emit(&lazy_event, payload) {
-            tracing::warn!("emit {lazy_event} failed: {e}");
-        }
-        // retry callback も spawn-retry event で UI に流す
-        let pid_for_cb = args.project_id.clone();
-        let app_for_cb = app.clone();
-        let on_attempt = move |a: SpawnAttempt| {
-            let event_name =
-                format!("agent:{pid_for_cb}:{}", AGENT_SPAWN_RETRY_EVENT_SUFFIX);
-            let payload: SpawnAttemptEventPayload = a.into();
-            if let Err(e) = app_for_cb.emit(&event_name, payload) {
-                tracing::warn!("emit {event_name} failed: {e}");
-            }
-        };
-        let mode = *state.current_sidecar_mode.read().await;
-        let newly_created = state
-            .multi
-            .spawn_for_with_retry(
-                args.project_id.clone(),
-                mode,
-                RetryPolicy::default(),
-                on_attempt,
-            )
-            .await
-            .map_err(|e| format!("lazy spawn failed: {e:#}"))?;
-
-        // newly_created なら notification pump task を起動（agent_spawn_sidecar と同じ）
-        if newly_created {
-            let multi = state.multi.clone();
-            let pid = args.project_id.clone();
-            let app_handle = app.clone();
-            tauri::async_runtime::spawn(async move {
-                let mut rx = match multi.subscribe(&pid).await {
-                    Ok(r) => r,
-                    Err(e) => {
-                        tracing::error!("lazy spawn subscribe failed for {pid}: {e:#}");
-                        return;
-                    }
-                };
-                loop {
-                    match rx.recv().await {
-                        Ok(n) => forward_notification(&app_handle, &pid, &n),
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                            tracing::warn!("lazy spawn notification lagged for {pid}, dropped {n}");
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            tracing::info!("lazy spawn notification stream closed for {pid}");
-                            break;
-                        }
-                    }
-                }
-            });
-        }
-    }
+    //    AS-HOTFIX-QW4 (DEC-018-046 carryover): `ensure_sidecar_with_lazy_spawn` helper に
+    //    抽出済み。`auth_open_login` でも同じ保護を共有する。
+    let mode = *state.current_sidecar_mode.read().await;
+    ensure_sidecar_with_lazy_spawn(
+        app.clone(),
+        state.multi.clone(),
+        mode,
+        args.project_id.clone(),
+        "sidecar_inactive",
+    )
+    .await?;
 
     // 1. thread_id 解決
     let thread_id = if let Some(tid) = args.thread_id.clone() {
@@ -451,13 +492,24 @@ pub async fn auth_watchdog_get_state(
 
 /// DEC-018-045 QW1 (AS-200.3): 再ログインを開始する。
 ///
-/// 1) 対象 project の sidecar に `account/login/start` を投げ、`authUrl` を取得
-/// 2) `tauri_plugin_shell::open_url` で既定ブラウザで開く
-/// 3) 成功 / 失敗のいずれも UI 側に Result で返却
+/// 1) **lazy spawn fallback** (AS-HOTFIX-QW4): sidecar が居なければ
+///    `ensure_sidecar_with_lazy_spawn` で再接続を試みる
+///    （idle reaper kill / 起動失敗後でも CTA が即時 fail しないよう保護）
+/// 2) 対象 project の sidecar に `account/login/start` を投げ、`authUrl` を取得
+/// 3) `tauri_plugin_shell::open_url` で既定ブラウザで開く
+/// 4) 成功 / 失敗のいずれも UI 側に Result で返却
 ///
 /// 使い方: warning toast / re-login modal の「再ログイン」ボタンから呼ぶ。
 /// Watchdog 自体は別 task で polling 継続中なので、ログイン完了後 5 分以内に
 /// `Authenticated(warning=false)` への遷移 event が自動で emit される。
+///
+/// # AS-HOTFIX-QW4 (DEC-018-046 carryover)
+///
+/// 当初実装は `multi.send_request` を直接叩いていたため、idle reaper が
+/// sidecar を kill した直後に「再ログイン」CTA を押すと
+/// `"no sidecar for project_id: ..."` エラーが出て CTA そのものが死ぬ
+/// 連鎖が発生した（M-1 smoke で 8 連 console error として観測）。
+/// `agent_send_message_v2` と同じ helper で lazy spawn を共有して根絶。
 #[tauri::command]
 pub async fn auth_open_login<R: Runtime>(
     app: AppHandle<R>,
@@ -466,7 +518,18 @@ pub async fn auth_open_login<R: Runtime>(
 ) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
 
-    // 1) account/login/start を投げる
+    // 1) lazy spawn fallback (AS-HOTFIX-QW4): sidecar が居なければ自動再接続
+    let mode = *state.current_sidecar_mode.read().await;
+    ensure_sidecar_with_lazy_spawn(
+        app.clone(),
+        state.multi.clone(),
+        mode,
+        project_id.clone(),
+        "auth_relogin",
+    )
+    .await?;
+
+    // 2) account/login/start を投げる
     let req_id = format!("auth-open-login-{}", uuid::Uuid::new_v4());
     let req = CodexRequest::new(req_id, method::ACCOUNT_LOGIN_START, None);
     let resp = state
