@@ -106,6 +106,17 @@ export type AuthWatchdogState =
       last_checked_unix: number;
       plan: string;
       user: string;
+      /**
+       * DEC-018-045 QW1 (AS-200.2): access token の expiry (Unix sec)。
+       * CLI が返さない場合 / fail-soft では null/undefined。
+       * camelCase は Rust 側 `#[serde(rename = "accessExpiresAtUnix")]` に対応。
+       */
+      accessExpiresAtUnix?: number | null;
+      /**
+       * DEC-018-045 QW1 (AS-200.2): expiry が threshold (30min) 以内なら true。
+       * `accessExpiresAtUnix == null` の時は false 固定 (fail-soft)。
+       */
+      expiryWarning?: boolean;
     }
   | {
       kind: 'requires_reauth';
@@ -133,6 +144,10 @@ export const AuthEvents = {
   stateChanged: (projectId: string) => `auth:${projectId}:state_changed`,
 } as const;
 
+// DEC-018-045 QW2/QW3: spawn-retry / lazy-spawn / idle-shutdown event 名は
+// `@/lib/tauri/events` の `AgentEvents` に追加済み。本 module からは re-export
+// しない（既存 import パスを増やさず、events.ts に統一する方針）。
+
 /** Watchdog start (idempotent)。lib.rs で自動起動するが UI からも操作可能。 */
 export async function authWatchdogStart(): Promise<void> {
   await invoke<void>('auth_watchdog_start');
@@ -153,6 +168,18 @@ export async function authWatchdogGetState(
   projectId: string,
 ): Promise<AuthWatchdogState> {
   return invoke<AuthWatchdogState>('auth_watchdog_get_state', { projectId });
+}
+
+/**
+ * DEC-018-045 QW1 (AS-200.3): 再ログインモーダル / warning toast から呼ぶ
+ * 「Codex の再ログインを開始する」Tauri command。
+ *
+ * Rust 側は `account/login/start` を invoke し、返却された authUrl を
+ * 既定ブラウザで開く（mock では mock OAuth URL になる）。
+ * 失敗時は throw し、UI 側は toast でエラー表示する。
+ */
+export async function authOpenLogin(projectId: string): Promise<void> {
+  await invoke<void>('auth_open_login', { projectId });
 }
 
 // --------------------------------------------------------------------------

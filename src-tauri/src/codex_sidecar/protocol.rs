@@ -345,6 +345,28 @@ pub struct AccountReadResult {
     pub account: Option<AccountInfo>,
     #[serde(rename = "requiresOpenaiAuth", default)]
     pub requires_openai_auth: bool,
+    /// DEC-018-045 QW1 (AS-200.1): OAuth access token の expiry。
+    ///
+    /// Real Codex CLI 0.128.0 では本 field の有無が未確定（リサーチ § 3.1
+    /// で「access TTL 1〜24h 推定 / refresh TTL 10〜30 日」と推定値のみ）。
+    /// CLI が返さない場合は **None で fail-soft**（既存 Authenticated state
+    /// の挙動を一切変えない）。Asagi 側は本値が `Some` のときだけ
+    /// `AuthState::Authenticated.expiry_warning` を計算する。
+    ///
+    /// 単位: Unix epoch seconds。
+    #[serde(
+        rename = "accessTokenExpiresAt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub access_token_expires_at: Option<i64>,
+    /// DEC-018-045 QW1 (AS-200.1): OAuth refresh token の expiry。同上 fail-soft。
+    #[serde(
+        rename = "refreshTokenExpiresAt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub refresh_token_expires_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

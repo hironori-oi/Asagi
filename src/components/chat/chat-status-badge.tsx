@@ -14,6 +14,8 @@ import { useTranslations } from 'next-intl';
 import { useCodexContext } from './codex-context';
 import { useChatStore } from '@/lib/stores/chat';
 import { useProjectStore } from '@/lib/stores/project';
+import { useSpawnRetry } from '@/lib/codex/use-spawn-retry';
+import { useLazySpawn } from '@/lib/codex/use-lazy-spawn';
 import { cn } from '@/lib/utils';
 
 const STATUS_DOT: Record<string, string> = {
@@ -22,26 +24,88 @@ const STATUS_DOT: Record<string, string> = {
   ready: 'bg-success',
   streaming: 'bg-accent animate-pulse',
   error: 'bg-destructive',
+  // DEC-018-045 QW2 (AS-201.3): outer retry layer の overlay state
+  retrying: 'bg-warning animate-pulse',
+  spawn_failed: 'bg-destructive',
+  // DEC-018-045 QW3 (AS-202.3): lazy spawn の overlay state
+  lazy_spawning: 'bg-warning animate-pulse',
 };
 
 export function ChatStatusBadge() {
   const ctx = useCodexContext();
   const t = useTranslations('chat.status');
+  const activeId = useProjectStore((s) => s.activeProjectId);
+  const retry = useSpawnRetry(activeId);
+  const lazy = useLazySpawn(activeId);
   if (!ctx) return null;
-  const dot = STATUS_DOT[ctx.status] ?? 'bg-muted-foreground/40';
+
+  // DEC-018-045 QW2/QW3 (AS-201.3 / AS-202.3): retry / lazy overlay
+  // 優先度: spawn_failed > retrying > lazy_spawning > ctx.status
+  // retry の方が深刻な状態（=明示 spawn の retry 失敗）なので最優先。
+  // lazy は send 時の自動 fallback 進行中 — UI 上は黄色 dot で「自動再接続中」。
+  const effectiveStatus: string = retry.isFailed
+    ? 'spawn_failed'
+    : retry.isRetrying
+      ? 'retrying'
+      : lazy.lazySpawning && (ctx.status === 'idle' || ctx.status === 'ready')
+        ? 'lazy_spawning'
+        : ctx.status;
+
+  const dot = STATUS_DOT[effectiveStatus] ?? 'bg-muted-foreground/40';
   const label = (() => {
+    if (effectiveStatus === 'retrying' && retry.attempt > 0) {
+      try {
+        return t('retrying', {
+          attempt: retry.attempt,
+          max: retry.maxRetries,
+        });
+      } catch {
+        return `Retrying (${retry.attempt}/${retry.maxRetries})`;
+      }
+    }
+    if (effectiveStatus === 'spawn_failed') {
+      try {
+        return t('spawn_failed');
+      } catch {
+        return 'Connect failed';
+      }
+    }
+    if (effectiveStatus === 'lazy_spawning') {
+      try {
+        return t('lazy_spawning');
+      } catch {
+        return 'Auto-reconnecting…';
+      }
+    }
     try {
       return t(ctx.status);
     } catch {
       return ctx.status;
     }
   })();
+
+  // Tooltip: retry 中は last_error を、lazy_spawning 中は reason を載せる
+  const title =
+    effectiveStatus === 'spawn_failed' || effectiveStatus === 'retrying'
+      ? (retry.lastError ?? label)
+      : effectiveStatus === 'lazy_spawning'
+        ? (lazy.lazyReason ?? label)
+        : label;
+
   return (
     <div
       role="status"
-      aria-label={`Codex ${ctx.status}`}
+      aria-live={
+        effectiveStatus === 'retrying' || effectiveStatus === 'lazy_spawning'
+          ? 'polite'
+          : undefined
+      }
+      aria-label={`Codex ${effectiveStatus}`}
       data-testid="chat-status-badge"
-      data-status={ctx.status}
+      data-status={effectiveStatus}
+      data-retry-attempt={retry.attempt || undefined}
+      data-lazy-spawning={lazy.lazySpawning ? 'true' : undefined}
+      title={title}
       className="flex items-center gap-1.5 rounded-full border border-border/60 bg-surface-elevated/60 px-2 py-0.5 text-[11px] text-muted-foreground"
     >
       <span aria-hidden className={cn('h-1.5 w-1.5 rounded-full', dot)} />

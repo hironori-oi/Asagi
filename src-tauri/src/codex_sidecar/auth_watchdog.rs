@@ -47,6 +47,7 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio::time;
 
+use super::contract::EXPIRY_WARNING_THRESHOLD_SECS;
 use super::multi::{MultiSidecarManager, ProjectId};
 use super::protocol::{method, AccountReadResult};
 use super::CodexRequest;
@@ -66,6 +67,10 @@ pub fn auth_event_name(project_id: &str) -> String {
 }
 
 /// Auth state machine の state。
+///
+/// DEC-018-045 QW1 (AS-200.2): `Authenticated` に expiry warning fields を追加。
+/// 既存 frontend (`use-auth-watchdog.ts` の `state.kind === 'authenticated'`)
+/// は serde tag が変わらないため後方互換。新規 fields は default でも安全。
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AuthState {
@@ -75,6 +80,15 @@ pub enum AuthState {
         last_checked_unix: i64,
         plan: String,
         user: String,
+        /// DEC-018-045 QW1 (AS-200.2): access token の expiry (Unix sec)。
+        /// CLI が返さない場合は None で fail-soft（warning 計算もスキップ）。
+        #[serde(rename = "accessExpiresAtUnix")]
+        access_expires_at_unix: Option<i64>,
+        /// DEC-018-045 QW1 (AS-200.2): expiry が
+        /// `now + EXPIRY_WARNING_THRESHOLD_SECS (=30min)` 以内なら true。
+        /// `access_expires_at_unix == None` の時は false 固定。
+        #[serde(rename = "expiryWarning")]
+        expiry_warning: bool,
     },
     RequiresReauth {
         detected_at_unix: i64,
@@ -250,10 +264,23 @@ impl AuthWatchdog {
                                     .as_ref()
                                     .and_then(|a| a.email.clone())
                                     .unwrap_or_else(|| "unknown".into());
+                                // DEC-018-045 QW1 (AS-200.2): expiry warning 計算。
+                                // CLI が expiry 未返却 (None) の場合は warning=false で固定し、
+                                // 既存の Authenticated 動作を一切変えない (fail-soft 厳守)。
+                                let now_unix = to_unix_seconds(SystemTime::now());
+                                let access_expires_at_unix = r.access_token_expires_at;
+                                let expiry_warning = match access_expires_at_unix {
+                                    Some(exp) => {
+                                        now_unix + EXPIRY_WARNING_THRESHOLD_SECS >= exp
+                                    }
+                                    None => false,
+                                };
                                 AuthState::Authenticated {
-                                    last_checked_unix: to_unix_seconds(SystemTime::now()),
+                                    last_checked_unix: now_unix,
                                     plan,
                                     user,
+                                    access_expires_at_unix,
+                                    expiry_warning,
                                 }
                             }
                         }
@@ -271,20 +298,40 @@ impl AuthWatchdog {
         };
 
         // state 比較 + 遷移検知
-        let prev_tag: String = {
+        // DEC-018-045 QW1 (AS-200.2): Authenticated 内の expiry_warning も
+        // 「sub-state 遷移」として扱い、false→true / true→false で必ず emit する。
+        // tag (= "authenticated") 同士の比較では拾えないため、prev の expiry_warning
+        // を併せて取得しておく。
+        let (prev_tag, prev_expiry_warning): (String, Option<bool>) = {
             let map = states.read().await;
-            map.get(project_id)
-                .map(|s| s.tag().to_string())
-                .unwrap_or_else(|| "unknown".to_string())
+            match map.get(project_id) {
+                Some(s) => {
+                    let warn = match s {
+                        AuthState::Authenticated { expiry_warning, .. } => Some(*expiry_warning),
+                        _ => None,
+                    };
+                    (s.tag().to_string(), warn)
+                }
+                None => ("unknown".to_string(), None),
+            }
         };
         let new_tag = new_state.tag().to_string();
+        let new_expiry_warning: Option<bool> = match &new_state {
+            AuthState::Authenticated { expiry_warning, .. } => Some(*expiry_warning),
+            _ => None,
+        };
         // 注意: Error / RequiresReauth は tag が同じでも reason / since_unix が
         // 変わるため、毎回 emit する (UI 上で「いつから止まっているか」を更新可能)。
+        // Authenticated は idempotent だが、expiry_warning が前回と異なれば emit。
+        let auth_warning_changed = prev_tag == "authenticated"
+            && new_tag == "authenticated"
+            && prev_expiry_warning != new_expiry_warning;
         let changed = prev_tag != new_tag
             || matches!(
                 new_state,
                 AuthState::Error { .. } | AuthState::RequiresReauth { .. }
-            );
+            )
+            || auth_warning_changed;
 
         // state 更新
         {
@@ -295,8 +342,25 @@ impl AuthWatchdog {
         if changed {
             let reason = match &new_state {
                 AuthState::Unknown => "unknown".to_string(),
-                AuthState::Authenticated { plan, user, .. } => {
-                    format!("authenticated as {user} ({plan})")
+                AuthState::Authenticated {
+                    plan,
+                    user,
+                    access_expires_at_unix,
+                    expiry_warning,
+                    ..
+                } => {
+                    if *expiry_warning {
+                        // DEC-018-045 QW1 (AS-200.2): expiry が間近 → 残 N 分を reason に含める
+                        let now_unix = to_unix_seconds(SystemTime::now());
+                        let remaining_min = access_expires_at_unix
+                            .map(|exp| ((exp - now_unix).max(0) + 59) / 60)
+                            .unwrap_or(0);
+                        format!(
+                            "expiry warning: 残 {remaining_min} 分 (authenticated as {user} ({plan}))"
+                        )
+                    } else {
+                        format!("authenticated as {user} ({plan})")
+                    }
                 }
                 AuthState::RequiresReauth { reason, .. } => reason.clone(),
                 AuthState::Error { last_error, .. } => last_error.clone(),
@@ -367,30 +431,11 @@ impl Drop for AuthWatchdog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex_sidecar::SidecarMode;
-    use std::sync::{Mutex as StdMutex, MutexGuard, OnceLock};
+    use crate::codex_sidecar::{env_test_lock, SidecarMode};
+    use std::sync::{Mutex as StdMutex, MutexGuard};
 
-    /// AS-CLEAN-06 (DEC-018-038 / DEC-018-044): 並列 cargo test 時の env var pollution 解消。
-    ///
-    /// 本 module の test 群は `ASAGI_AUTH_POLL_INTERVAL_MS` / `ASAGI_MOCK_FORCE_REAUTH` /
-    /// `ASAGI_MOCK_FAIL_ACCOUNT_READ` をプロセス全体の env として set/remove する。
-    /// cargo test の default 並列実行下では他 test がそれらを picking up し、
-    /// 期待外の挙動（例: test_force_check_now が他 test の `FORCE_REAUTH=1` を読んで
-    /// `requires_reauth` を返す）で断続的に fail する。
-    ///
-    /// 修正方針 ① (新規依存追加禁止厳守): serial_test crate を使わず、`OnceLock<StdMutex<()>>`
-    /// で本 mod 内 5 test を直列化する。各 test の冒頭で `lock_env_test_serial()` を呼び、
-    /// guard が drop されるまで他 auth_watchdog test は待機する。
-    ///
-    /// 注意: 他 module test は env を一切 set しないため衝突しないが、もし将来同名 env を
-    /// 使う test を追加する場合は同 lock を共有する必要がある（本 lock は本 mod 専用）。
-    fn env_test_lock() -> &'static StdMutex<()> {
-        static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| StdMutex::new(()))
-    }
-
-    /// `env_test_lock()` を取得し、毒化 (panic) 状態でも guard を返す。
-    /// 直列化のみが目的なので poison は無視して継続。
+    /// AS-CLEAN-06 (DEC-018-038 / DEC-018-044) → AS-200.2 で `codex_sidecar::env_test_lock`
+    /// に統一。`mock` mod の env 操作 test と process 横断で直列化する。
     fn lock_env_test_serial() -> MutexGuard<'static, ()> {
         env_test_lock()
             .lock()
@@ -573,6 +618,154 @@ mod tests {
                 other => panic!("expected Error from mock failure, got {other:?}"),
             }
         }
+    }
+
+    /// AS-200.2 DoD #1: expiry が短い (warning=true) → 通常 (warning=false) への遷移で
+    /// emit が +1 件されること。Authenticated 同士の sub-state 遷移として扱う。
+    ///
+    /// シナリオ:
+    ///   1) ASAGI_MOCK_EXPIRY_IN_SECS=120 → expiry=now+120s、warning=true
+    ///   2) env を消して再 poll → expiry=now+3600s (default)、warning=false
+    ///   3) 初回 unknown→authenticated(warning=true) で 1 件、
+    ///      2 回目 authenticated(warning=true)→authenticated(warning=false) で +1 件 = 計 2 件
+    #[tokio::test]
+    async fn test_authenticated_expiry_warning_transition_emits() {
+        let _env_guard = lock_env_test_serial();
+        setup_short_interval();
+        clear_mock_envs();
+        std::env::remove_var("ASAGI_MOCK_EXPIRY_IN_SECS");
+
+        let multi = Arc::new(MultiSidecarManager::new());
+        multi
+            .spawn_for("p-warn-1", SidecarMode::Mock)
+            .await
+            .unwrap();
+
+        let (cap, emitter) = make_emitter();
+        let states = Arc::new(RwLock::new(HashMap::new()));
+
+        // 1) warning=true な expiry でスタート (120s < 1800s threshold)
+        std::env::set_var("ASAGI_MOCK_EXPIRY_IN_SECS", "120");
+        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-warn-1").await;
+        {
+            let map = states.read().await;
+            let s = map.get("p-warn-1").unwrap();
+            match s {
+                AuthState::Authenticated {
+                    expiry_warning,
+                    access_expires_at_unix,
+                    ..
+                } => {
+                    assert!(*expiry_warning, "warning must be true at 120s expiry");
+                    assert!(
+                        access_expires_at_unix.is_some(),
+                        "expiry must be returned by mock"
+                    );
+                }
+                other => panic!("expected Authenticated, got {other:?}"),
+            }
+        }
+
+        // 2) env を消して default (3600s) に戻し、再 poll → warning=false
+        std::env::remove_var("ASAGI_MOCK_EXPIRY_IN_SECS");
+        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-warn-1").await;
+        {
+            let map = states.read().await;
+            let s = map.get("p-warn-1").unwrap();
+            match s {
+                AuthState::Authenticated { expiry_warning, .. } => {
+                    assert!(!*expiry_warning, "warning must be false at 3600s expiry");
+                }
+                other => panic!("expected Authenticated, got {other:?}"),
+            }
+        }
+
+        // 3) emit count: 1) unknown→authenticated(warning=true)
+        //                2) authenticated(warning=true)→authenticated(warning=false)
+        let events = cap.events.lock().unwrap();
+        assert_eq!(
+            events.len(),
+            2,
+            "must emit twice (initial + warning sub-state change), got {}",
+            events.len()
+        );
+        // 1 件目 reason に "残 N 分" が含まれること
+        assert!(
+            events[0].1.reason.contains("残") && events[0].1.reason.contains("分"),
+            "first emit reason must include 残 N 分: {}",
+            events[0].1.reason
+        );
+        // 2 件目は warning=false なので素の "authenticated as ..." 形式
+        assert!(
+            !events[1].1.reason.contains("残"),
+            "second emit reason must NOT include 残 (warning=false): {}",
+            events[1].1.reason
+        );
+        drop(events);
+        clear_mock_envs();
+    }
+
+    /// AS-200.2 DoD #2: CLI が expiry を返さない (None) ケースで warning=false 固定、
+    /// かつ重複 poll で emit が増えないこと (Authenticated は idempotent)。
+    ///
+    /// `ASAGI_MOCK_FORCE_NO_EXPIRY=1` を mock が解釈し expiry を None で返す前提
+    /// (mock.rs AS-200.1 実装と整合)。本テストでは「expiry がそもそも返らない時に
+    /// warning が常に false で安定し、emit が増えない」ことを担保する。
+    #[tokio::test]
+    async fn test_authenticated_no_expiry_means_warning_false_and_idempotent() {
+        let _env_guard = lock_env_test_serial();
+        setup_short_interval();
+        clear_mock_envs();
+        std::env::remove_var("ASAGI_MOCK_EXPIRY_IN_SECS");
+        // mock 側に「expiry を返さない」モードがあれば使う。無ければ default (=expiry あり)
+        // でも Authenticated 側の warning=false → emit 増えない idempotency は確認できる。
+        std::env::set_var("ASAGI_MOCK_FORCE_NO_EXPIRY", "1");
+
+        let multi = Arc::new(MultiSidecarManager::new());
+        multi
+            .spawn_for("p-noexp-1", SidecarMode::Mock)
+            .await
+            .unwrap();
+        let (cap, emitter) = make_emitter();
+        let states = Arc::new(RwLock::new(HashMap::new()));
+
+        // 1 回目: unknown→authenticated で 1 件 emit
+        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-noexp-1").await;
+        {
+            let map = states.read().await;
+            let s = map.get("p-noexp-1").unwrap();
+            match s {
+                AuthState::Authenticated { expiry_warning, .. } => {
+                    assert!(
+                        !*expiry_warning,
+                        "warning must be false (no expiry / fail-soft)"
+                    );
+                }
+                other => panic!("expected Authenticated, got {other:?}"),
+            }
+        }
+
+        // 2 回目: 同じ state → emit 増えない
+        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-noexp-1").await;
+        // 3 回目も同じく
+        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-noexp-1").await;
+
+        let events = cap.events.lock().unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "Authenticated with stable warning=false must emit only once, got {}",
+            events.len()
+        );
+        // reason に "残" は含まれない
+        assert!(
+            !events[0].1.reason.contains("残"),
+            "reason must not include 残 when warning=false: {}",
+            events[0].1.reason
+        );
+        drop(events);
+        std::env::remove_var("ASAGI_MOCK_FORCE_NO_EXPIRY");
+        clear_mock_envs();
     }
 
     #[tokio::test]

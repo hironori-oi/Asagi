@@ -172,14 +172,19 @@
       "spawning": "spawning…",
       "ready": "ready",
       "streaming": "streaming…",
-      "error": "error"
+      "error": "error",
+      "retrying": "Reconnecting… ({attempt}/{max})",
+      "spawn_failed": "Connect failed",
+      "lazy_spawning": "Auto-reconnecting…"
     },
     "auth": {
       "unknown": "Auth checking",
       "authenticated": "Auth OK",
       "requires_reauth": "Re-login required",
       "error": "Auth check failed",
-      "checkNow": "Check now"
+      "checkNow": "Check now",
+      "expiryWarning": "Expiring in {minutes} min",
+      "relogin": "Re-login"
     },
     "modeBadge": {
       "mock": "MOCK",

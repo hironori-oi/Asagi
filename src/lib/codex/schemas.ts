@@ -192,6 +192,15 @@ export interface AccountInfo {
 export interface AccountReadResult {
   account: AccountInfo | null;
   requiresOpenaiAuth: boolean;
+  /**
+   * DEC-018-045 QW1 (AS-200.1): OAuth access token の expiry (Unix epoch seconds)。
+   * Real CLI が返さないケースは `null` / `undefined` で fail-soft（既存挙動を維持）。
+   */
+  accessTokenExpiresAt?: number | null;
+  /**
+   * DEC-018-045 QW1 (AS-200.1): OAuth refresh token の expiry (Unix epoch seconds)。
+   */
+  refreshTokenExpiresAt?: number | null;
 }
 
 // ---------------------------------------------------------------
@@ -281,4 +290,39 @@ export interface AgentSendMessageResult {
 
 export interface AgentShutdownArgs {
   projectId: string;
+}
+
+// ---------------------------------------------------------------
+// DEC-018-045 QW2 (AS-201.3): Spawn retry event payload
+// ---------------------------------------------------------------
+
+/**
+ * `agent:{projectId}:spawn-retry` event payload。
+ *
+ * Rust 側 `SpawnAttemptEventPayload` (`commands/codex.rs`) と camelCase で 1:1。
+ * `attempt` は 1-based、`max_retries` は policy 設定値（既定 3）。
+ * 最終試行失敗時は `next_sleep_ms === null` で attempt = max_retries の event が来る。
+ */
+export interface SpawnAttemptEvent {
+  attempt: number;
+  maxRetries: number;
+  lastError: string | null;
+  nextSleepMs: number | null;
+}
+
+export function validateSpawnAttemptEvent(x: unknown): SpawnAttemptEvent | null {
+  if (!isObject(x)) return null;
+  if (typeof x.attempt !== 'number') return null;
+  if (typeof x.maxRetries !== 'number') return null;
+  return {
+    attempt: x.attempt,
+    maxRetries: x.maxRetries,
+    lastError:
+      typeof x.lastError === 'string'
+        ? x.lastError
+        : x.lastError === null
+          ? null
+          : null,
+    nextSleepMs: typeof x.nextSleepMs === 'number' ? x.nextSleepMs : null,
+  };
 }

@@ -24,12 +24,40 @@ use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::codex_sidecar::auth_watchdog::AuthState;
+use crate::codex_sidecar::contract::{
+    AGENT_LAZY_SPAWN_EVENT_SUFFIX, AGENT_SPAWN_RETRY_EVENT_SUFFIX,
+};
 use crate::codex_sidecar::mock::make_turn_start_request;
 use crate::codex_sidecar::protocol::{
     method, CodexNotification, ThreadStartResult, TurnStartResult,
 };
+use crate::codex_sidecar::retry::{RetryPolicy, SpawnAttempt};
 use crate::codex_sidecar::{CodexRequest, SidecarMode};
 use crate::AppState;
+
+/// DEC-018-045 QW2 (AS-201.3): retry 試行 1 回ぶんの event payload。
+///
+/// frontend `SpawnAttemptEvent` (`schemas.ts`) と camelCase で 1:1 対応。
+/// `agent:{projectId}:spawn-retry` で emit される。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnAttemptEventPayload {
+    pub attempt: usize,
+    pub max_retries: usize,
+    pub last_error: Option<String>,
+    pub next_sleep_ms: Option<u64>,
+}
+
+impl From<SpawnAttempt> for SpawnAttemptEventPayload {
+    fn from(a: SpawnAttempt) -> Self {
+        Self {
+            attempt: a.attempt,
+            max_retries: a.max_retries,
+            last_error: a.last_error,
+            next_sleep_ms: a.next_sleep_ms,
+        }
+    }
+}
 
 /// Multi-Sidecar 起動。同一 project_id への重複呼び出しは no-op。
 ///
@@ -53,11 +81,26 @@ pub async fn agent_spawn_sidecar<R: Runtime>(
     project_id: String,
 ) -> Result<(), String> {
     let mode = *state.current_sidecar_mode.read().await;
+
+    // DEC-018-045 QW2 (AS-201.3): outer retry layer 経由で spawn する。
+    // retry 試行ごとに `agent:{projectId}:spawn-retry` event を emit し、
+    // ChatStatusBadge で「再接続中… (試行 N/3)」表示に使う。
+    let pid_for_cb = project_id.clone();
+    let app_for_cb = app.clone();
+    let on_attempt = move |a: SpawnAttempt| {
+        let event_name =
+            format!("agent:{pid_for_cb}:{}", AGENT_SPAWN_RETRY_EVENT_SUFFIX);
+        let payload: SpawnAttemptEventPayload = a.into();
+        if let Err(e) = app_for_cb.emit(&event_name, payload) {
+            tracing::warn!("emit {event_name} failed: {e}");
+        }
+    };
+
     let newly_created = state
         .multi
-        .spawn_for(project_id.clone(), mode)
+        .spawn_for_with_retry(project_id.clone(), mode, RetryPolicy::default(), on_attempt)
         .await
-        .map_err(|e| format!("spawn_for failed: {e:#}"))?;
+        .map_err(|e| format!("spawn_for_with_retry failed: {e:#}"))?;
 
     if !newly_created {
         // 既存 sidecar に対する重複 spawn — pump task は既に走っているので
@@ -123,17 +166,99 @@ pub struct AgentSendMessageResult {
     pub turn_id: String,
 }
 
+/// DEC-018-045 QW3 (AS-202.2): lazy spawn event の payload。
+/// `agent:{projectId}:lazy-spawn` で emit され、UI に「自動再接続中」表示を出させる。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LazySpawnEventPayload {
+    pub project_id: String,
+    pub reason: &'static str,
+}
+
 /// turn 1 ターン開始。Real protocol に準拠して
 /// 1. thread_id 未指定なら thread/start
 /// 2. turn/start 即時 inProgress を取得
 /// 3. thread_id / turn_id を返却
 ///
 /// streaming token は events 経由で `agent:{projectId}:item/agentMessage/delta` で受信。
+///
+/// # DEC-018-045 QW3 (AS-202.2): lazy spawn fallback
+///
+/// idle reaper / 明示的 shutdown / 起動失敗等で sidecar が居ない場合、
+/// `spawn_for_with_retry` を実行して再接続を試みてから request を送る。
+/// その間 `agent:{projectId}:lazy-spawn` event を 1 回だけ emit して
+/// UI に「自動再接続中」状態を表示させる。
 #[tauri::command]
-pub async fn agent_send_message_v2(
+pub async fn agent_send_message_v2<R: Runtime>(
+    app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     args: AgentSendMessageArgs,
 ) -> Result<AgentSendMessageResult, String> {
+    // 0. lazy spawn: sidecar が居なければ自動再接続（QW3 AS-202.2）
+    if !state.multi.is_active(&args.project_id).await {
+        let lazy_event = format!(
+            "agent:{}:{}",
+            args.project_id, AGENT_LAZY_SPAWN_EVENT_SUFFIX
+        );
+        let payload = LazySpawnEventPayload {
+            project_id: args.project_id.clone(),
+            reason: "sidecar_inactive",
+        };
+        if let Err(e) = app.emit(&lazy_event, payload) {
+            tracing::warn!("emit {lazy_event} failed: {e}");
+        }
+        // retry callback も spawn-retry event で UI に流す
+        let pid_for_cb = args.project_id.clone();
+        let app_for_cb = app.clone();
+        let on_attempt = move |a: SpawnAttempt| {
+            let event_name =
+                format!("agent:{pid_for_cb}:{}", AGENT_SPAWN_RETRY_EVENT_SUFFIX);
+            let payload: SpawnAttemptEventPayload = a.into();
+            if let Err(e) = app_for_cb.emit(&event_name, payload) {
+                tracing::warn!("emit {event_name} failed: {e}");
+            }
+        };
+        let mode = *state.current_sidecar_mode.read().await;
+        let newly_created = state
+            .multi
+            .spawn_for_with_retry(
+                args.project_id.clone(),
+                mode,
+                RetryPolicy::default(),
+                on_attempt,
+            )
+            .await
+            .map_err(|e| format!("lazy spawn failed: {e:#}"))?;
+
+        // newly_created なら notification pump task を起動（agent_spawn_sidecar と同じ）
+        if newly_created {
+            let multi = state.multi.clone();
+            let pid = args.project_id.clone();
+            let app_handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut rx = match multi.subscribe(&pid).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::error!("lazy spawn subscribe failed for {pid}: {e:#}");
+                        return;
+                    }
+                };
+                loop {
+                    match rx.recv().await {
+                        Ok(n) => forward_notification(&app_handle, &pid, &n),
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!("lazy spawn notification lagged for {pid}, dropped {n}");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            tracing::info!("lazy spawn notification stream closed for {pid}");
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+    }
+
     // 1. thread_id 解決
     let thread_id = if let Some(tid) = args.thread_id.clone() {
         tid
@@ -322,6 +447,57 @@ pub async fn auth_watchdog_get_state(
         .as_ref()
         .ok_or_else(|| "AuthWatchdog not initialized".to_string())?;
     Ok(w.get_state(&project_id).await)
+}
+
+/// DEC-018-045 QW1 (AS-200.3): 再ログインを開始する。
+///
+/// 1) 対象 project の sidecar に `account/login/start` を投げ、`authUrl` を取得
+/// 2) `tauri_plugin_shell::open_url` で既定ブラウザで開く
+/// 3) 成功 / 失敗のいずれも UI 側に Result で返却
+///
+/// 使い方: warning toast / re-login modal の「再ログイン」ボタンから呼ぶ。
+/// Watchdog 自体は別 task で polling 継続中なので、ログイン完了後 5 分以内に
+/// `Authenticated(warning=false)` への遷移 event が自動で emit される。
+#[tauri::command]
+pub async fn auth_open_login<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt;
+
+    // 1) account/login/start を投げる
+    let req_id = format!("auth-open-login-{}", uuid::Uuid::new_v4());
+    let req = CodexRequest::new(req_id, method::ACCOUNT_LOGIN_START, None);
+    let resp = state
+        .multi
+        .send_request(&project_id, req)
+        .await
+        .map_err(|e| format!("account/login/start rpc error: {e:#}"))?;
+    if let Some(err) = resp.error {
+        return Err(format!(
+            "account/login/start codex error {}: {}",
+            err.code, err.message
+        ));
+    }
+    let result = resp
+        .result
+        .ok_or_else(|| "account/login/start returned empty result".to_string())?;
+    let auth_url = result
+        .get("authUrl")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "account/login/start: authUrl missing".to_string())?
+        .to_string();
+
+    // 2) 既定ブラウザで authUrl を開く。
+    //    `tauri-plugin-opener` への移行は M2 後段で別タスクとして扱う
+    //    （24h 限度内で新規 dep 追加禁止 strict req）。
+    #[allow(deprecated)]
+    app.shell()
+        .open(&auth_url, None)
+        .map_err(|e| format!("open authUrl failed: {e}"))?;
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------

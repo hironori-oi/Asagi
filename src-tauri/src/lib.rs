@@ -21,8 +21,14 @@ pub mod session;
 pub mod settings;
 
 use crate::codex_sidecar::auth_watchdog::{AuthWatchdog, ENV_WATCHDOG_DISABLED};
+use crate::codex_sidecar::contract::AGENT_IDLE_SHUTDOWN_EVENT_SUFFIX;
 use crate::codex_sidecar::multi::MultiSidecarManager;
 use crate::codex_sidecar::SidecarMode;
+use tauri::Emitter;
+
+/// DEC-018-045 QW3 (AS-202.1): idle reaper を起動時に有効化するか抑止する env。
+/// `1` 設定時は idle reaper task を起動しない（テスト・デバッグ用）。
+const ENV_IDLE_REAPER_DISABLED: &str = "ASAGI_SIDECAR_IDLE_REAPER_DISABLED";
 
 /// アプリ全体で共有する状態。
 /// SQLite コネクションと Multi-Sidecar マップを保持する。
@@ -94,6 +100,33 @@ pub fn run() {
                 }
             }
 
+            // DEC-018-045 QW3 (AS-202.1): F4 idle reaper 起動。
+            // `ASAGI_SIDECAR_IDLE_REAPER_DISABLED=1` で抑止可能。
+            // idle 判定で shutdown された project には
+            // `agent:{projectId}:idle-shutdown` event を emit する。
+            let reaper_disabled =
+                std::env::var(ENV_IDLE_REAPER_DISABLED).ok().as_deref() == Some("1");
+            if reaper_disabled {
+                tracing::info!(
+                    "Sidecar idle reaper disabled by {ENV_IDLE_REAPER_DISABLED}=1"
+                );
+            } else {
+                let multi_for_reaper = state.multi.clone();
+                let app_for_reaper = app.handle().clone();
+                let started = multi_for_reaper.start_idle_reaper(move |pid: &str| {
+                    let event_name =
+                        format!("agent:{pid}:{AGENT_IDLE_SHUTDOWN_EVENT_SUFFIX}");
+                    if let Err(e) = app_for_reaper.emit(&event_name, pid.to_string()) {
+                        tracing::warn!("emit {event_name} failed: {e}");
+                    } else {
+                        tracing::info!("Sidecar {pid} reaped (idle > threshold)");
+                    }
+                });
+                if started {
+                    tracing::info!("Sidecar idle reaper started (default 30min threshold)");
+                }
+            }
+
             // DEC-018-028 QW1: F3 Auth Watchdog 起動。
             // 環境変数 `ASAGI_AUTH_WATCHDOG_DISABLED=1` で抑止可能。
             // Real impl 切替時は MultiSidecarManager 配下が RealCodexSidecar に
@@ -153,6 +186,8 @@ pub fn run() {
             commands::codex::auth_watchdog_stop,
             commands::codex::auth_watchdog_force_check,
             commands::codex::auth_watchdog_get_state,
+            // DEC-018-045 QW1 (AS-200.3): re-login launcher
+            commands::codex::auth_open_login,
             // AS-UX-05: Sidebar Files tab shallow tree
             commands::fs::list_dir,
         ])

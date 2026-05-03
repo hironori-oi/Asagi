@@ -34,6 +34,7 @@ pub mod mock_server;
 pub mod multi;
 pub mod protocol;
 pub mod real;
+pub mod retry;
 
 pub use protocol::{CodexNotification, CodexRequest, CodexResponse};
 
@@ -108,6 +109,28 @@ pub fn create_sidecar(mode: SidecarMode, project_id: impl Into<String>) -> Box<d
         SidecarMode::Mock => Box::new(mock::MockCodexSidecar::new(project_id)),
         SidecarMode::Real => Box::new(real::RealCodexSidecar::new(project_id)),
     }
+}
+
+/// 共有テスト用 env lock (AS-200.2 / AS-CLEAN-06 拡張)。
+///
+/// 同 process 内で `ASAGI_*` env を set/remove する test 群（mock / auth_watchdog 等）が
+/// 並列に走ると process 全体の env を取り合って flaky になる。
+/// `OnceLock<StdMutex<()>>` を 1 つに統一し、env を触る test は必ずこの lock を
+/// 取得することで直列化する。
+///
+/// # 使用例
+/// ```ignore
+/// let _g = codex_sidecar::env_test_lock().lock().unwrap_or_else(|p| p.into_inner());
+/// std::env::set_var("ASAGI_FOO", "1");
+/// // ... test 本体 ...
+/// std::env::remove_var("ASAGI_FOO");
+/// // _g drop で lock 解放
+/// ```
+#[cfg(test)]
+pub(crate) fn env_test_lock() -> &'static std::sync::Mutex<()> {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 #[cfg(test)]

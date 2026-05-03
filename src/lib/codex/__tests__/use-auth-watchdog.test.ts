@@ -96,6 +96,61 @@ describe('useAuthWatchdog', () => {
     expect(result.current.lastChange?.to).toBe('requires_reauth');
   });
 
+  it('AS-200.3: expiry warning seed → expiryWarning=true / 残分計算が動く', async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const seed: AuthWatchdogState = {
+      kind: 'authenticated',
+      last_checked_unix: nowSec,
+      plan: 'mock-pro-5x',
+      user: 'mock-user',
+      accessExpiresAtUnix: nowSec + 600, // 10 分後
+      expiryWarning: true,
+    };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'auth_watchdog_get_state') return seed;
+      return undefined;
+    });
+    mockListen.mockResolvedValue(() => {});
+
+    const { result } = renderHook(() => useAuthWatchdog('p-warn'));
+    await waitFor(() => {
+      expect(result.current.expiryWarning).toBe(true);
+    });
+    // 9〜11 分の範囲（実行時間ジッタ許容）
+    expect(result.current.expiryRemainingMinutes).toBeGreaterThanOrEqual(9);
+    expect(result.current.expiryRemainingMinutes).toBeLessThanOrEqual(11);
+    // requires_reauth ではない (warning は authenticated のサブ状態)
+    expect(result.current.requiresReauth).toBe(false);
+    expect(result.current.isAuthenticated).toBe(true);
+  });
+
+  it('AS-200.3: openLogin が auth_open_login invoke を発火する', async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'auth_watchdog_get_state') {
+        return { kind: 'unknown' } satisfies AuthWatchdogState;
+      }
+      if (cmd === 'auth_open_login') return undefined;
+      return undefined;
+    });
+    mockListen.mockResolvedValue(() => {});
+
+    const { result } = renderHook(() => useAuthWatchdog('p-relogin'));
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'auth_watchdog_get_state',
+        expect.objectContaining({ projectId: 'p-relogin' }),
+      );
+    });
+
+    await act(async () => {
+      await result.current.openLogin();
+    });
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'auth_open_login',
+      expect.objectContaining({ projectId: 'p-relogin' }),
+    );
+  });
+
   it('forceCheck が auth_watchdog_force_check invoke を発火する', async () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'auth_watchdog_get_state') {

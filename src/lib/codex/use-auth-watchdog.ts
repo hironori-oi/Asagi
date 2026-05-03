@@ -21,6 +21,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { on } from '@/lib/tauri/events';
 import {
   AuthEvents,
+  authOpenLogin,
   authWatchdogForceCheck,
   authWatchdogGetState,
   type AuthStateChangedPayload,
@@ -40,10 +41,25 @@ export interface UseAuthWatchdogResult {
   requiresReauth: boolean;
   /** RPC 失敗 / decode 失敗 の状態か。 */
   isError: boolean;
+  /**
+   * DEC-018-045 QW1 (AS-200.3): expiry が threshold 以内 (warning=true) か。
+   * `requiresReauth` よりも 1 段階手前の予兆。`Authenticated` のサブ状態。
+   */
+  expiryWarning: boolean;
+  /**
+   * DEC-018-045 QW1 (AS-200.3): expiry までの残時間（分）。warning でない場合は null。
+   * UI の toast / banner で「残 N 分」と表示する用途。
+   */
+  expiryRemainingMinutes: number | null;
   /** 最後に受信した遷移 payload (UI で「いつ from→to したか」を表示)。 */
   lastChange: AuthStateChangedPayload | null;
   /** UI の「今すぐ確認」ボタン handler。 */
   forceCheck: () => Promise<void>;
+  /**
+   * DEC-018-045 QW1 (AS-200.3): 再ログインモーダル / warning toast から呼ぶ。
+   * `account/login/start` を invoke し、authUrl を既定ブラウザで開く。
+   */
+  openLogin: () => Promise<void>;
 }
 
 /**
@@ -111,13 +127,39 @@ export function useAuthWatchdog(projectId: string): UseAuthWatchdogResult {
     await authWatchdogForceCheck(projectId);
   }, [projectId]);
 
+  const openLogin = useCallback(async () => {
+    if (!projectId) return;
+    await authOpenLogin(projectId);
+  }, [projectId]);
+
+  // DEC-018-045 QW1 (AS-200.3): expiry warning derived state。
+  // Authenticated 以外では false 固定 (`requiresReauth` / `isError` が優先される)。
+  const expiryWarning =
+    state.kind === 'authenticated' && state.expiryWarning === true;
+  const expiryRemainingMinutes = (() => {
+    if (
+      state.kind !== 'authenticated' ||
+      state.expiryWarning !== true ||
+      state.accessExpiresAtUnix == null
+    ) {
+      return null;
+    }
+    const nowSec = Math.floor(Date.now() / 1000);
+    const diff = state.accessExpiresAtUnix - nowSec;
+    if (diff <= 0) return 0;
+    return Math.ceil(diff / 60);
+  })();
+
   return {
     state,
     kind: state.kind,
     isAuthenticated: state.kind === 'authenticated',
     requiresReauth: state.kind === 'requires_reauth',
     isError: state.kind === 'error',
+    expiryWarning,
+    expiryRemainingMinutes,
     lastChange,
     forceCheck,
+    openLogin,
   };
 }

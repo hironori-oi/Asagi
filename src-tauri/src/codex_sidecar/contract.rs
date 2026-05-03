@@ -95,6 +95,68 @@ pub const IMAGE_URL_FIELD: &str = "url";
 /// POC #5 で実証済み（リサーチ RAs-12 完全解消）。
 pub const JOB_USE_BREAKAWAY: bool = true;
 
+// =============================================================================
+// DEC-018-045 QW1 (AS-200.1〜.2): F3 Auth Watchdog expiry warning
+// =============================================================================
+
+/// `account/read` レスポンスの access token expiry field 名 (camelCase)。
+///
+/// Real CLI が返さない可能性を許容するため `Option<i64>` に decode する
+/// （`AccountReadResult.access_token_expires_at`）。本定数は schema 文字列
+/// hardcode 防止のため import しておく（DEC-018-033 厳守、PM § 6.5）。
+pub const ACCESS_TOKEN_EXPIRES_AT_FIELD: &str = "accessTokenExpiresAt";
+
+/// `account/read` レスポンスの refresh token expiry field 名 (camelCase)。
+pub const REFRESH_TOKEN_EXPIRES_AT_FIELD: &str = "refreshTokenExpiresAt";
+
+/// expiry warning を出す閾値（秒）。default は 30 分前（1800 秒）。
+///
+/// `AuthState::Authenticated.expiry_warning` の計算に使う:
+/// `now + EXPIRY_WARNING_THRESHOLD_SECS >= access_expires_at_unix` のとき true。
+pub const EXPIRY_WARNING_THRESHOLD_SECS: i64 = 30 * 60;
+
+// =============================================================================
+// DEC-018-045 QW2 (AS-201.1): F1 Outer Retry Layer 既定値
+// =============================================================================
+
+/// sidecar spawn 失敗時の retry base sleep ms (decorrelated jitter base)。
+pub const SPAWN_RETRY_BASE_MS: u64 = 200;
+
+/// sidecar spawn 失敗時の retry sleep cap ms (decorrelated jitter cap)。
+pub const SPAWN_RETRY_CAP_MS: u64 = 10_000;
+
+/// sidecar spawn 失敗時の最大 retry 回数（R-QW-2 厳守）。
+///
+/// 注意: 本値は **Asagi 側 spawn-level outer retry の最大回数**。
+/// research § 2.3 の AWS pseudo-rust の `max=5` は turn-level retry の値で別物。
+/// Asagi では turn 中の自動 retry は行わない（DEC-018-027 厳守）。
+pub const SPAWN_RETRY_MAX: usize = 3;
+
+/// retry attempt event の suffix。`agent:{projectId}:spawn-retry` を組み立てる。
+pub const AGENT_SPAWN_RETRY_EVENT_SUFFIX: &str = "spawn-retry";
+
+// =============================================================================
+// DEC-018-045 QW3 (AS-202.1): F4 thread idle auto-shutdown
+// =============================================================================
+
+/// sidecar idle 判定 threshold (秒)。30 分。
+pub const SIDECAR_IDLE_THRESHOLD_SECS: u64 = 30 * 60;
+
+/// idle reaper task の poll 間隔 (秒)。1 分。
+pub const SIDECAR_IDLE_REAPER_INTERVAL_SECS: u64 = 60;
+
+/// idle threshold を test 時に短縮するための env var。ms 単位（既定はなし）。
+pub const ENV_SIDECAR_IDLE_THRESHOLD_MS: &str = "ASAGI_SIDECAR_IDLE_THRESHOLD_MS";
+
+/// idle reaper interval を test 時に短縮するための env var。ms 単位（既定はなし）。
+pub const ENV_SIDECAR_IDLE_REAPER_INTERVAL_MS: &str = "ASAGI_SIDECAR_IDLE_REAPER_INTERVAL_MS";
+
+/// lazy spawn event の suffix。`agent:{projectId}:lazy-spawn` を組み立てる。
+pub const AGENT_LAZY_SPAWN_EVENT_SUFFIX: &str = "lazy-spawn";
+
+/// idle shutdown event の suffix。`agent:{projectId}:idle-shutdown` を組み立てる。
+pub const AGENT_IDLE_SHUTDOWN_EVENT_SUFFIX: &str = "idle-shutdown";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +195,40 @@ mod tests {
         assert_ne!(ITEM_DELTA_METHOD, "item/assistantMessage/delta");
         // 旧誤値 3: image_url は POC #4 で否定
         assert_ne!(IMAGE_URL_FIELD, "image_url");
+    }
+
+    /// DEC-018-045 QW1 (AS-200.1): expiry warning field 名 / threshold 既定値の golden。
+    #[test]
+    fn contract_qw1_expiry_warning_constants_are_stable() {
+        assert_eq!(ACCESS_TOKEN_EXPIRES_AT_FIELD, "accessTokenExpiresAt");
+        assert_eq!(REFRESH_TOKEN_EXPIRES_AT_FIELD, "refreshTokenExpiresAt");
+        // 30 分前 = 1800 秒。R-QW-1 mitigation の前提値。
+        assert_eq!(EXPIRY_WARNING_THRESHOLD_SECS, 1800);
+    }
+
+    /// DEC-018-045 QW2 (AS-201.1): retry policy 既定値の golden。
+    #[test]
+    fn contract_qw2_retry_constants_are_stable() {
+        assert_eq!(SPAWN_RETRY_BASE_MS, 200);
+        assert_eq!(SPAWN_RETRY_CAP_MS, 10_000);
+        // R-QW-2 厳守: max=3。turn-level の AWS max=5 と混同しないこと。
+        assert_eq!(SPAWN_RETRY_MAX, 3);
+        assert_eq!(AGENT_SPAWN_RETRY_EVENT_SUFFIX, "spawn-retry");
+    }
+
+    /// DEC-018-045 QW3 (AS-202.1): idle threshold / event suffix の golden。
+    #[test]
+    fn contract_qw3_idle_constants_are_stable() {
+        // 30 分 = 1800 秒
+        assert_eq!(SIDECAR_IDLE_THRESHOLD_SECS, 1800);
+        // 1 分 polling
+        assert_eq!(SIDECAR_IDLE_REAPER_INTERVAL_SECS, 60);
+        assert_eq!(ENV_SIDECAR_IDLE_THRESHOLD_MS, "ASAGI_SIDECAR_IDLE_THRESHOLD_MS");
+        assert_eq!(
+            ENV_SIDECAR_IDLE_REAPER_INTERVAL_MS,
+            "ASAGI_SIDECAR_IDLE_REAPER_INTERVAL_MS"
+        );
+        assert_eq!(AGENT_LAZY_SPAWN_EVENT_SUFFIX, "lazy-spawn");
+        assert_eq!(AGENT_IDLE_SHUTDOWN_EVENT_SUFFIX, "idle-shutdown");
     }
 }

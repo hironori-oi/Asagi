@@ -41,4 +41,10 @@ export const AgentEvents = {
   accountUpdated: (projectId: string) => `agent:${projectId}:account/updated`,
   accountRateLimitsUpdated: (projectId: string) =>
     `agent:${projectId}:account/rateLimits/updated`,
+  // DEC-018-045 QW2 (AS-201.3): outer retry layer の試行通知
+  spawnRetry: (projectId: string) => `agent:${projectId}:spawn-retry`,
+  // DEC-018-045 QW3 (AS-202.3): lazy spawn 通知
+  lazySpawn: (projectId: string) => `agent:${projectId}:lazy-spawn`,
+  // DEC-018-045 QW3 (AS-202.1): idle reaper による shutdown 通知
+  idleShutdown: (projectId: string) => `agent:${projectId}:idle-shutdown`,
 } as const;

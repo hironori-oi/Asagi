@@ -394,11 +394,40 @@ impl MockCodexSidecar {
                         rate_limits_by_limit_id: Some(by_id),
                     })
                 };
+                // DEC-018-045 QW1 (AS-200.1): expiry を mock からも返す。
+                // default は now + 1h（warning に入らない）、
+                // ASAGI_MOCK_EXPIRY_IN_SECS=N で N 秒後に短縮可能 (test / smoke 用)。
+                // ASAGI_MOCK_FORCE_NO_EXPIRY=1 で expiry 自体を None で返す
+                // (CLI が expiry を返さない fail-soft シナリオの再現、AS-200.2 test)。
+                let force_no_expiry = std::env::var("ASAGI_MOCK_FORCE_NO_EXPIRY")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                let expiry_in_secs: i64 = std::env::var("ASAGI_MOCK_EXPIRY_IN_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<i64>().ok())
+                    .unwrap_or(60 * 60);
+                let now_unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                let access_expiry = if force_reauth || force_no_expiry {
+                    None
+                } else {
+                    Some(now_unix + expiry_in_secs)
+                };
+                let refresh_expiry = if force_reauth || force_no_expiry {
+                    None
+                } else {
+                    // refresh は 30 日先（リサーチ § 3.1 推定の上限）
+                    Some(now_unix + 30 * 24 * 60 * 60)
+                };
                 CodexResponse::ok(
                     id,
                     serde_json::to_value(AccountReadResult {
                         account,
                         requires_openai_auth: force_reauth,
+                        access_token_expires_at: access_expiry,
+                        refresh_token_expires_at: refresh_expiry,
                     })
                     .expect("serialize account/read"),
                 )
@@ -636,6 +665,15 @@ fn _unused_json_marker(_v: JsonValue) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::codex_sidecar::env_test_lock;
+
+    /// DEC-018-045 QW1 (AS-200.1) / AS-CLEAN-06 → AS-200.2 で `codex_sidecar::env_test_lock`
+    /// に統一。auth_watchdog 等の env 操作 test と process 横断で直列化する。
+    /// 旧 `ENV_TEST_LOCK()` 名は wrapper として維持し、参照箇所の差分を最小化する。
+    #[allow(non_snake_case)]
+    pub(super) fn ENV_TEST_LOCK() -> &'static std::sync::Mutex<()> {
+        env_test_lock()
+    }
 
     #[tokio::test]
     async fn mock_initialize_returns_result() {
@@ -694,6 +732,16 @@ mod tests {
 
     #[tokio::test]
     async fn mock_account_read_after_initialized() {
+        // env を触る test と process 横断で直列化（AS-200.2）
+        let _g = ENV_TEST_LOCK()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        // 他 test の残留を防御的に除去
+        std::env::remove_var("ASAGI_MOCK_FORCE_REAUTH");
+        std::env::remove_var("ASAGI_MOCK_FORCE_NO_EXPIRY");
+        std::env::remove_var("ASAGI_MOCK_EXPIRY_IN_SECS");
+        std::env::remove_var("ASAGI_MOCK_FAIL_ACCOUNT_READ");
+
         let mut s = MockCodexSidecar::new("p1".into());
         s.start().await.unwrap();
         let req = CodexRequest::new("a-1", method::ACCOUNT_READ, None);
@@ -703,6 +751,72 @@ mod tests {
         assert_eq!(acc.account_type, "chatgpt");
         assert_eq!(acc.plan_type.as_deref(), Some(MOCK_PLAN));
         assert!(!r.requires_openai_auth);
+
+        // DEC-018-045 QW1 (AS-200.1): expiry が同梱されること。
+        // default は now + 60min なので、now + 30min < expiry < now + 65min。
+        let expiry = r.access_token_expires_at.expect("expiry must be present in mock");
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert!(
+            expiry > now_unix + 30 * 60 && expiry <= now_unix + 65 * 60,
+            "expiry must be ~60min ahead: now={now_unix} expiry={expiry}"
+        );
+        // refresh は 30 日先
+        let refresh = r.refresh_token_expires_at.expect("refresh expiry mock");
+        assert!(refresh > now_unix + 25 * 24 * 60 * 60);
+    }
+
+    /// DEC-018-045 QW1 (AS-200.1): force_reauth でも expiry は None で返ることを確認。
+    /// （account=None, requires=true なので watchdog 側は RequiresReauth に遷移し、
+    /// expiry warning logic は走らない fail-soft 経路を担保。）
+    #[tokio::test]
+    async fn mock_account_read_force_reauth_returns_none_expiry() {
+        let _g = ENV_TEST_LOCK()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        // 他 test の残留を防御的に除去
+        std::env::remove_var("ASAGI_MOCK_FORCE_NO_EXPIRY");
+        std::env::remove_var("ASAGI_MOCK_EXPIRY_IN_SECS");
+        std::env::remove_var("ASAGI_MOCK_FAIL_ACCOUNT_READ");
+        std::env::set_var("ASAGI_MOCK_FORCE_REAUTH", "1");
+        let mut s = MockCodexSidecar::new("p-noexp".into());
+        s.start().await.unwrap();
+        let req = CodexRequest::new("a-2", method::ACCOUNT_READ, None);
+        let resp = s.send_request(req).await.unwrap();
+        let r: AccountReadResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        std::env::remove_var("ASAGI_MOCK_FORCE_REAUTH");
+        assert!(r.requires_openai_auth);
+        assert!(r.account.is_none());
+        assert!(r.access_token_expires_at.is_none());
+        assert!(r.refresh_token_expires_at.is_none());
+    }
+
+    /// DEC-018-045 QW1 (AS-200.1): ASAGI_MOCK_EXPIRY_IN_SECS で短縮可能。
+    #[tokio::test]
+    async fn mock_account_read_supports_short_expiry_via_env() {
+        let _g = ENV_TEST_LOCK()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        // 他 test の残留を防御的に除去
+        std::env::remove_var("ASAGI_MOCK_FORCE_REAUTH");
+        std::env::remove_var("ASAGI_MOCK_FORCE_NO_EXPIRY");
+        std::env::remove_var("ASAGI_MOCK_FAIL_ACCOUNT_READ");
+        std::env::set_var("ASAGI_MOCK_EXPIRY_IN_SECS", "120");
+        let mut s = MockCodexSidecar::new("p-shortexp".into());
+        s.start().await.unwrap();
+        let req = CodexRequest::new("a-3", method::ACCOUNT_READ, None);
+        let resp = s.send_request(req).await.unwrap();
+        let r: AccountReadResult = serde_json::from_value(resp.result.unwrap()).unwrap();
+        std::env::remove_var("ASAGI_MOCK_EXPIRY_IN_SECS");
+        let expiry = r.access_token_expires_at.unwrap();
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        // ~120 秒先（多少のジッタ許容）
+        assert!(expiry >= now_unix + 60 && expiry <= now_unix + 180);
     }
 
     #[tokio::test]

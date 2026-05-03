@@ -172,14 +172,19 @@
       "spawning": "起動中…",
       "ready": "待機中",
       "streaming": "生成中…",
-      "error": "エラー"
+      "error": "エラー",
+      "retrying": "再接続中… ({attempt}/{max})",
+      "spawn_failed": "接続失敗",
+      "lazy_spawning": "自動再接続中…"
     },
     "auth": {
       "unknown": "認証 確認中",
       "authenticated": "認証 OK",
       "requires_reauth": "再ログイン必要",
       "error": "認証 取得失敗",
-      "checkNow": "今すぐ確認"
+      "checkNow": "今すぐ確認",
+      "expiryWarning": "残 {minutes} 分",
+      "relogin": "再ログイン"
     },
     "modeBadge": {
       "mock": "MOCK",
