@@ -151,6 +151,60 @@ describe('useAuthWatchdog', () => {
     );
   });
 
+  it('AS-HOTFIX-QW1 (DEC-018-045 ⑥): force-check is debounced — 5 連打 → 500ms 経過まで invoke は 1 回のみ', async () => {
+    // fake timers で setTimeout(500ms) を制御 (advanceTimersByTimeAsync で microtask も flush)
+    vi.useFakeTimers();
+    try {
+      let forceCheckCalls = 0;
+      mockInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'auth_watchdog_get_state') {
+          return { kind: 'unknown' } satisfies AuthWatchdogState;
+        }
+        if (cmd === 'auth_watchdog_force_check') {
+          forceCheckCalls += 1;
+          return undefined;
+        }
+        return undefined;
+      });
+      mockListen.mockResolvedValue(() => {});
+
+      const { result } = renderHook(() => useAuthWatchdog('p-debounce'));
+      // seed useEffect 起動を待つ (microtask flush)
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // 100ms 間隔で 5 回連打 (= 計 400ms 経過)
+      // 各呼び出しは共有 Promise を返し、trailing 発火時に一括 resolve される
+      const pending: Array<Promise<void>> = [];
+      for (let i = 0; i < 5; i += 1) {
+        pending.push(result.current.forceCheck());
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(100);
+        });
+      }
+      // 最後の呼び出しは loop 内 i=4 で行われ、その後 100ms 進めた直後 (= 500ms 時点)。
+      // 最後の forceCheck 呼び出し時刻は 400ms、debounce 500ms なので fire は 900ms。
+      // よって 500ms 時点では invoke は 0 回。
+      expect(forceCheckCalls).toBe(0);
+
+      // 残り 400ms (= 計 900ms) で trailing 発火
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      // 共有 Promise 経由で全 caller が resolve される
+      await Promise.all(pending);
+
+      expect(forceCheckCalls).toBe(1);
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'auth_watchdog_force_check',
+        expect.objectContaining({ projectId: 'p-debounce' }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('forceCheck が auth_watchdog_force_check invoke を発火する', async () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'auth_watchdog_get_state') {

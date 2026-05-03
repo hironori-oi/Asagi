@@ -43,7 +43,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter, Runtime};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex as TokioMutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time;
 
@@ -186,6 +186,10 @@ pub struct AuthWatchdog {
     handle: Option<JoinHandle<()>>,
     states: Arc<RwLock<HashMap<ProjectId, AuthState>>>,
     emitter: Arc<dyn WatchdogEmitter>,
+    /// DEC-018-045 厳守事項 ⑥ (R-QW-1 緩和策): poll_one / force_check の並行実行を抑制する。
+    /// `try_lock()` で busy 判定し、busy 時は早期 return + state-changed 再 emit なし。
+    /// async 中で hold するため必ず `tokio::sync::Mutex` を使用 (`std::sync::Mutex` 不可)。
+    in_flight: Arc<TokioMutex<()>>,
 }
 
 impl AuthWatchdog {
@@ -197,6 +201,7 @@ impl AuthWatchdog {
             handle: None,
             states: Arc::new(RwLock::new(HashMap::new())),
             emitter,
+            in_flight: Arc::new(TokioMutex::new(())),
         }
     }
 
@@ -222,12 +227,28 @@ impl AuthWatchdog {
     ///   `MultiSidecarManager::send_request` 経由で **mock または real** sidecar
     ///   に届く。Real 化は `codex_sidecar/real.rs` を埋める 1 ファイル変更で完了し、
     ///   本 watchdog 側は無修正。
+    ///
+    /// DEC-018-045 厳守事項 ⑥ (R-QW-1 緩和策): `in_flight` Mutex を `try_lock`。
+    /// busy 時は `state-changed` 再 emit なしで即 return (二重通知防止)。
     pub async fn poll_one(
         multi: &Arc<MultiSidecarManager>,
         states: &Arc<RwLock<HashMap<ProjectId, AuthState>>>,
         emitter: &Arc<dyn WatchdogEmitter>,
+        in_flight: &Arc<TokioMutex<()>>,
         project_id: &str,
     ) {
+        // DEC-018-045 ⑥: 並行抑制ガード。busy 時は静かに早期 return する
+        // (state は変えない / event 再 emit しない)。
+        let _guard = match in_flight.try_lock() {
+            Ok(g) => g,
+            Err(_) => {
+                tracing::debug!(
+                    "auth watchdog poll_one for {project_id} skipped: already in flight"
+                );
+                return;
+            }
+        };
+
         let req_id = format!("auth-watchdog-{}", uuid::Uuid::new_v4());
         let req = CodexRequest::new(req_id, method::ACCOUNT_READ, None);
 
@@ -384,6 +405,7 @@ impl AuthWatchdog {
         let multi = self.multi.clone();
         let states = self.states.clone();
         let emitter = self.emitter.clone();
+        let in_flight = self.in_flight.clone();
         let handle = tokio::spawn(async move {
             // 起動直後に 1 度即時実行 (initial seed)
             // 念のため小休止して sidecar spawn の機会を与える
@@ -391,7 +413,7 @@ impl AuthWatchdog {
             loop {
                 let active: Vec<String> = multi.list_active().await;
                 for pid in active {
-                    Self::poll_one(&multi, &states, &emitter, &pid).await;
+                    Self::poll_one(&multi, &states, &emitter, &in_flight, &pid).await;
                 }
                 time::sleep(interval).await;
             }
@@ -407,8 +429,18 @@ impl AuthWatchdog {
     }
 
     /// 即時 1 回 poll を強制実行する (UI からの「今すぐ確認」)。
+    ///
+    /// DEC-018-045 ⑥: `poll_one` 冒頭の `in_flight.try_lock()` により、
+    /// 並行する poll (start ループ内 / 連打された force_check) は静かにスキップされる。
     pub async fn force_check_now(&self, project_id: &str) -> Result<()> {
-        Self::poll_one(&self.multi, &self.states, &self.emitter, project_id).await;
+        Self::poll_one(
+            &self.multi,
+            &self.states,
+            &self.emitter,
+            &self.in_flight,
+            project_id,
+        )
+        .await;
         Ok(())
     }
 
@@ -475,6 +507,11 @@ mod tests {
         (cap, dyn_emitter)
     }
 
+    /// Test 用 in_flight ガード生成 (DEC-018-045 ⑥)。
+    fn make_in_flight() -> Arc<TokioMutex<()>> {
+        Arc::new(TokioMutex::new(()))
+    }
+
     #[tokio::test]
     async fn test_authenticated_state_after_first_poll() {
         let _env_guard = lock_env_test_serial();
@@ -489,7 +526,8 @@ mod tests {
 
         let (cap, emitter) = make_emitter();
         let states = Arc::new(RwLock::new(HashMap::new()));
-        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-auth-1").await;
+        let in_flight = make_in_flight();
+        AuthWatchdog::poll_one(&multi, &states, &emitter, &in_flight, "p-auth-1").await;
 
         let map = states.read().await;
         let s = map.get("p-auth-1").expect("state must be recorded");
@@ -525,9 +563,10 @@ mod tests {
             .unwrap();
         let (cap, emitter) = make_emitter();
         let states = Arc::new(RwLock::new(HashMap::new()));
+        let in_flight = make_in_flight();
 
         // 1) まず Authenticated を確認
-        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-auth-2").await;
+        AuthWatchdog::poll_one(&multi, &states, &emitter, &in_flight, "p-auth-2").await;
         {
             let map = states.read().await;
             assert_eq!(map.get("p-auth-2").unwrap().tag(), "authenticated");
@@ -535,7 +574,7 @@ mod tests {
 
         // 2) FORCE_REAUTH を立てて再 poll
         std::env::set_var(ENV_MOCK_FORCE_REAUTH, "1");
-        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-auth-2").await;
+        AuthWatchdog::poll_one(&multi, &states, &emitter, &in_flight, "p-auth-2").await;
         {
             let map = states.read().await;
             let s = map.get("p-auth-2").unwrap();
@@ -583,7 +622,8 @@ mod tests {
             let multi = Arc::new(MultiSidecarManager::new());
             let (_cap, emitter) = make_emitter();
             let states = Arc::new(RwLock::new(HashMap::new()));
-            AuthWatchdog::poll_one(&multi, &states, &emitter, "p-not-spawned").await;
+            let in_flight = make_in_flight();
+            AuthWatchdog::poll_one(&multi, &states, &emitter, &in_flight, "p-not-spawned").await;
             let map = states.read().await;
             let s = map.get("p-not-spawned").unwrap();
             match s {
@@ -603,8 +643,9 @@ mod tests {
             multi.spawn_for("p-fail", SidecarMode::Mock).await.unwrap();
             let (_cap, emitter) = make_emitter();
             let states = Arc::new(RwLock::new(HashMap::new()));
+            let in_flight = make_in_flight();
             std::env::set_var(ENV_MOCK_FAIL_ACCOUNT_READ, "1");
-            AuthWatchdog::poll_one(&multi, &states, &emitter, "p-fail").await;
+            AuthWatchdog::poll_one(&multi, &states, &emitter, &in_flight, "p-fail").await;
             std::env::remove_var(ENV_MOCK_FAIL_ACCOUNT_READ);
             let map = states.read().await;
             let s = map.get("p-fail").unwrap();
@@ -643,10 +684,11 @@ mod tests {
 
         let (cap, emitter) = make_emitter();
         let states = Arc::new(RwLock::new(HashMap::new()));
+        let in_flight = make_in_flight();
 
         // 1) warning=true な expiry でスタート (120s < 1800s threshold)
         std::env::set_var("ASAGI_MOCK_EXPIRY_IN_SECS", "120");
-        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-warn-1").await;
+        AuthWatchdog::poll_one(&multi, &states, &emitter, &in_flight, "p-warn-1").await;
         {
             let map = states.read().await;
             let s = map.get("p-warn-1").unwrap();
@@ -668,7 +710,7 @@ mod tests {
 
         // 2) env を消して default (3600s) に戻し、再 poll → warning=false
         std::env::remove_var("ASAGI_MOCK_EXPIRY_IN_SECS");
-        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-warn-1").await;
+        AuthWatchdog::poll_one(&multi, &states, &emitter, &in_flight, "p-warn-1").await;
         {
             let map = states.read().await;
             let s = map.get("p-warn-1").unwrap();
@@ -728,9 +770,10 @@ mod tests {
             .unwrap();
         let (cap, emitter) = make_emitter();
         let states = Arc::new(RwLock::new(HashMap::new()));
+        let in_flight = make_in_flight();
 
         // 1 回目: unknown→authenticated で 1 件 emit
-        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-noexp-1").await;
+        AuthWatchdog::poll_one(&multi, &states, &emitter, &in_flight, "p-noexp-1").await;
         {
             let map = states.read().await;
             let s = map.get("p-noexp-1").unwrap();
@@ -746,9 +789,9 @@ mod tests {
         }
 
         // 2 回目: 同じ state → emit 増えない
-        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-noexp-1").await;
+        AuthWatchdog::poll_one(&multi, &states, &emitter, &in_flight, "p-noexp-1").await;
         // 3 回目も同じく
-        AuthWatchdog::poll_one(&multi, &states, &emitter, "p-noexp-1").await;
+        AuthWatchdog::poll_one(&multi, &states, &emitter, &in_flight, "p-noexp-1").await;
 
         let events = cap.events.lock().unwrap();
         assert_eq!(
@@ -790,5 +833,76 @@ mod tests {
         // tag 同一なので emit されないことを確認 (Authenticated は idempotent)
         assert_eq!(events[0].1.from, "unknown");
         assert_eq!(events[0].1.to, "authenticated");
+    }
+
+    /// DEC-018-045 厳守事項 ⑥ (R-QW-1 緩和策): `force_check` 並行呼び出し時に
+    /// `in_flight` Mutex の `try_lock` が片方を busy 判定 → 早期 return すること。
+    /// busy で return した側は **state-changed event を再 emit しない** (二重通知防止)。
+    ///
+    /// シナリオ:
+    ///   1) initial seed として 1 度 poll → unknown→authenticated で 1 件 emit
+    ///   2) `in_flight` lock を test 側が hold した状態で `force_check_now` を呼ぶ
+    ///      → busy 判定で早期 return → emit 増えない (件数 1 件のまま)
+    ///   3) lock を release してもう 1 度 force_check → 通常実行 (idempotent なので emit 増えない)
+    ///
+    /// 「2 本の force_check を真の並行で起動して片方が busy で抜ける」のは
+    /// tokio task のスケジューリング順に依存しフレーキーになるため、
+    /// 上記のように lock を test 側が hold する形で**決定論的**に検証する。
+    #[tokio::test]
+    async fn test_force_check_concurrent_call_returns_busy() {
+        let _env_guard = lock_env_test_serial();
+        setup_short_interval();
+        clear_mock_envs();
+
+        let multi = Arc::new(MultiSidecarManager::new());
+        multi
+            .spawn_for("p-busy-1", SidecarMode::Mock)
+            .await
+            .unwrap();
+        let (cap, emitter) = make_emitter();
+        let watchdog = AuthWatchdog::new(multi.clone(), emitter);
+
+        // 1) initial seed: unknown → authenticated で 1 件 emit
+        watchdog.force_check_now("p-busy-1").await.unwrap();
+        {
+            let events = cap.events.lock().unwrap();
+            assert_eq!(
+                events.len(),
+                1,
+                "initial seed must emit once: got {}",
+                events.len()
+            );
+        }
+
+        // 2) in_flight lock を test 側で hold した状態で force_check_now → 早期 return
+        //    poll_one が `try_lock()` で Err → `state-changed` 再 emit なしで即抜ける
+        let in_flight = watchdog.in_flight.clone();
+        let held = in_flight
+            .try_lock()
+            .expect("test must own the lock initially");
+        watchdog.force_check_now("p-busy-1").await.unwrap();
+        {
+            let events = cap.events.lock().unwrap();
+            assert_eq!(
+                events.len(),
+                1,
+                "busy force_check must NOT emit (state-changed 再 emit 禁止): got {}",
+                events.len()
+            );
+        }
+        drop(held);
+
+        // 3) lock release 後は再度 force_check が通常実行されるが、
+        //    Authenticated → Authenticated (warning 同値) は idempotent なので emit 増えない
+        watchdog.force_check_now("p-busy-1").await.unwrap();
+        {
+            let events = cap.events.lock().unwrap();
+            assert_eq!(
+                events.len(),
+                1,
+                "post-release force_check is idempotent: got {}",
+                events.len()
+            );
+        }
     }
 }

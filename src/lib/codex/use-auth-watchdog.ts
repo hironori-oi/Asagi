@@ -17,7 +17,7 @@
 
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { on } from '@/lib/tauri/events';
 import {
   AuthEvents,
@@ -29,6 +29,16 @@ import {
 } from './sidecar-client';
 
 export type AuthKind = AuthWatchdogState['kind'];
+
+/**
+ * DEC-018-045 厳守事項 ⑥ (R-QW-1 緩和策): 「今すぐ確認」ボタン連打時に
+ * IDP refresh が並行実行され 429 / refresh-token-reuse → session 無効化
+ * (worst case account lock) を起こすのを防ぐ trailing-edge debounce。
+ *
+ * 連打中は最後の呼び出しのみを 500ms 後に 1 度だけ実行する。
+ * 新規 dep 追加禁止 (DEC-018-045 ⑦) のため lodash を使わず手書き setTimeout で実装。
+ */
+const FORCE_CHECK_DEBOUNCE_MS = 500;
 
 export interface UseAuthWatchdogResult {
   /** 現在の AuthState (`unknown` 初期値)。 */
@@ -122,9 +132,76 @@ export function useAuthWatchdog(projectId: string): UseAuthWatchdogResult {
     };
   }, [projectId]);
 
-  const forceCheck = useCallback(async () => {
-    if (!projectId) return;
-    await authWatchdogForceCheck(projectId);
+  // DEC-018-045 厳守事項 ⑥ (R-QW-1 緩和策): forceCheck の trailing-edge debounce。
+  //   - timer ref に setTimeout id を保持し、再呼び出しのたびに clearTimeout でリセット
+  //   - 500ms 沈静化したら **最後に渡された projectId** で 1 度だけ invoke
+  //   - 連打中の各 caller には**共有 Promise**を返し、trailing 発火時に一括 resolve
+  //     (Promise leak 防止)
+  //   - unmount / projectId 切替時は pending Promise を resolve しつつ timer をクリア
+  //   - 新規 dep 禁止 (DEC-018-045 ⑦) のため lodash 不使用 / 純粋 setTimeout 実装
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingPromiseRef = useRef<Promise<void> | null>(null);
+  const pendingResolveRef = useRef<(() => void) | null>(null);
+  const latestProjectIdRef = useRef<string>(projectId);
+  useEffect(() => {
+    latestProjectIdRef.current = projectId;
+  }, [projectId]);
+
+  const forceCheck = useMemo(
+    () => (): Promise<void> => {
+      // 既存 timer をリセット (連打中は最後の 1 回だけ trailing で発火)。
+      // pendingPromise は破棄せず流用 — 全 caller が同じ Promise を共有し、
+      // trailing 発火時に一括 resolve される (= Promise leak 防止)。
+      if (debounceTimerRef.current !== null) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      const pid = latestProjectIdRef.current;
+      if (!pid) {
+        // projectId 未確定: 何もせず即時 resolve
+        return Promise.resolve();
+      }
+      // 共有 Promise が無ければ生成
+      if (pendingPromiseRef.current === null) {
+        pendingPromiseRef.current = new Promise<void>((resolve) => {
+          pendingResolveRef.current = resolve;
+        });
+      }
+      const sharedPromise = pendingPromiseRef.current;
+      debounceTimerRef.current = setTimeout(() => {
+        debounceTimerRef.current = null;
+        const resolve = pendingResolveRef.current;
+        pendingPromiseRef.current = null;
+        pendingResolveRef.current = null;
+        // invoke 失敗は Rust 側 watchdog の next poll / event 経由で
+        // UI に反映されるため握りつぶして OK。
+        authWatchdogForceCheck(pid)
+          .catch(() => {
+            /* swallow: next poll で復帰 */
+          })
+          .finally(() => {
+            resolve?.();
+          });
+      }, FORCE_CHECK_DEBOUNCE_MS);
+      return sharedPromise;
+    },
+    [],
+  );
+
+  // unmount / projectId 切替時に pending timer をクリア + pending Promise を resolve
+  // (Rust 側 in_flight Mutex とは独立したフロント安全網。古い projectId の pending invoke を破棄。)
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current !== null) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      // pending caller を leak させないため即時 resolve
+      const resolve = pendingResolveRef.current;
+      pendingPromiseRef.current = null;
+      pendingResolveRef.current = null;
+      resolve?.();
+    };
   }, [projectId]);
 
   const openLogin = useCallback(async () => {
