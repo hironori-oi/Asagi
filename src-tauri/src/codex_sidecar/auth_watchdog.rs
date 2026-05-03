@@ -368,10 +368,37 @@ impl Drop for AuthWatchdog {
 mod tests {
     use super::*;
     use crate::codex_sidecar::SidecarMode;
-    use std::sync::Mutex as StdMutex;
+    use std::sync::{Mutex as StdMutex, MutexGuard, OnceLock};
+
+    /// AS-CLEAN-06 (DEC-018-038 / DEC-018-044): 並列 cargo test 時の env var pollution 解消。
+    ///
+    /// 本 module の test 群は `ASAGI_AUTH_POLL_INTERVAL_MS` / `ASAGI_MOCK_FORCE_REAUTH` /
+    /// `ASAGI_MOCK_FAIL_ACCOUNT_READ` をプロセス全体の env として set/remove する。
+    /// cargo test の default 並列実行下では他 test がそれらを picking up し、
+    /// 期待外の挙動（例: test_force_check_now が他 test の `FORCE_REAUTH=1` を読んで
+    /// `requires_reauth` を返す）で断続的に fail する。
+    ///
+    /// 修正方針 ① (新規依存追加禁止厳守): serial_test crate を使わず、`OnceLock<StdMutex<()>>`
+    /// で本 mod 内 5 test を直列化する。各 test の冒頭で `lock_env_test_serial()` を呼び、
+    /// guard が drop されるまで他 auth_watchdog test は待機する。
+    ///
+    /// 注意: 他 module test は env を一切 set しないため衝突しないが、もし将来同名 env を
+    /// 使う test を追加する場合は同 lock を共有する必要がある（本 lock は本 mod 専用）。
+    fn env_test_lock() -> &'static StdMutex<()> {
+        static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| StdMutex::new(()))
+    }
+
+    /// `env_test_lock()` を取得し、毒化 (panic) 状態でも guard を返す。
+    /// 直列化のみが目的なので poison は無視して継続。
+    fn lock_env_test_serial() -> MutexGuard<'static, ()> {
+        env_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     /// テスト用の polling 間隔 100ms を環境変数で設定。
-    /// 各テストは serial 実行を想定 (cargo test は file 内 serial、test 並列時は注意)。
+    /// `lock_env_test_serial()` の guard 保持下で呼ぶこと。
     fn setup_short_interval() {
         std::env::set_var(ENV_POLL_INTERVAL_MS, "100");
     }
@@ -405,6 +432,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_authenticated_state_after_first_poll() {
+        let _env_guard = lock_env_test_serial();
         setup_short_interval();
         clear_mock_envs();
 
@@ -441,6 +469,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transitions_to_requires_reauth_on_force_reauth_env() {
+        let _env_guard = lock_env_test_serial();
         setup_short_interval();
         clear_mock_envs();
 
@@ -480,6 +509,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_force_check_now_triggers_immediate_poll() {
+        let _env_guard = lock_env_test_serial();
         setup_short_interval();
         clear_mock_envs();
 
@@ -499,6 +529,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_state_on_account_read_failure() {
+        let _env_guard = lock_env_test_serial();
         setup_short_interval();
         clear_mock_envs();
 
@@ -546,6 +577,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_loop_polls_periodically_with_short_interval() {
+        let _env_guard = lock_env_test_serial();
         // 100ms 間隔で 250ms 待つ → 少なくとも 2 回 poll される
         std::env::set_var(ENV_POLL_INTERVAL_MS, "100");
         clear_mock_envs();
