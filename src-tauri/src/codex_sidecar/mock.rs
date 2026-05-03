@@ -17,9 +17,9 @@
 //!   - `model/list`             → mock model 一覧
 //!   - `thread/start`           → `{ thread: { id, ephemeral: true, ... } }`
 //!   - `turn/start`             → 即 `{ turn: { id, status: "inProgress" } }` を返却 →
-//!                                バックグラウンドで 50ms × 10 トークンの
-//!                                `item/agentMessage/delta` 通知 →
-//!                                `turn/completed` notification で終端
+//!     バックグラウンドで 50ms × 10 トークンの
+//!     `item/agentMessage/delta` 通知 →
+//!     `turn/completed` notification で終端
 //!   - `turn/interrupt`         → `{}` 即 success
 
 use anyhow::Result;

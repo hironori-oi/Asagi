@@ -20,7 +20,7 @@
 //!
 //!   - Handshake : `initialize`, `initialized`
 //!   - Account   : `account/read`, `account/login/start`, `account/login/cancel`,
-//!                 `account/logout`, `account/rateLimits/read`
+//!     `account/logout`, `account/rateLimits/read`
 //!   - Thread    : `thread/start`, `thread/resume`, `thread/list`, `thread/read`
 //!   - Turn      : `turn/start`, `turn/steer`, `turn/interrupt`
 //!   - Model     : `model/list`

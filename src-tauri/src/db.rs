@@ -5,7 +5,7 @@
 //!
 //! 関連: dev-v0.1.0-scaffold-design.md § 1.3
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
@@ -23,8 +23,36 @@ pub fn database_path() -> Result<PathBuf> {
 /// SQLite を開いて初期 migration を流す。
 pub fn init_database() -> Result<Connection> {
     let path = database_path()?;
+    init_database_at(&path)
+}
+
+/// AS-HOTFIX-QW5 (DEC-018-047 ⓖ 生きた事例 #2): `init_database()` 全経路を
+/// path 指定で test 可能にするため抽出した実装関数。
+///
+/// # なぜ抽出が必要か
+///
+/// 旧 `init_database()` は `dirs::home_dir()` 依存だったため、
+/// `~/.asagi/history.db` の **on-disk** に対する以下の経路は cargo unit test
+/// で検証されていなかった:
+///   1. `Connection::open(&path)` の disk file 作成 / 開封
+///   2. `PRAGMA journal_mode = WAL` の execute_batch (in-memory DB では noop)
+///   3. `PRAGMA journal_mode = WAL` 実行時の `-wal` / `-shm` ファイル生成
+///   4. **既存の空 / 部分 schema DB に対する追加 migration の冪等性**
+///   5. `BEGIN; ... COMMIT;` トランザクションの execute_batch 動作
+///
+/// 旧 `run_migrations_creates_full_schema_in_memory` は (4) を含む全経路を
+/// **完全に skip** しており、AS-HOTFIX-QW3 で fts5 sanity を pass させた結果
+/// 初めて (1)〜(5) に到達するようになって新たな failure point を生んだ。
+/// 本関数の抽出 + tempfile DB ベースの test (`init_database_at_*`) で
+/// 以降は CI が即時検出する。
+///
+/// # 引数
+///   - `path`: SQLite ファイル絶対 / 相対パス。親ディレクトリは事前に
+///     `create_dir_all` 等で存在保証されている前提
+///     (`init_database()` は `database_path()` 内で実施済)。
+pub fn init_database_at(path: &Path) -> Result<Connection> {
     tracing::info!("opening sqlite at {}", path.display());
-    let conn = Connection::open(&path)
+    let conn = Connection::open(path)
         .with_context(|| format!("failed to open sqlite: {}", path.display()))?;
 
     // FTS5 が bundled features で有効化されていることを確認するためのクエリ。
@@ -33,13 +61,38 @@ pub fn init_database() -> Result<Connection> {
     fts5_supported(&conn)?;
 
     // Pragmas
-    conn.execute_batch(
-        r#"
-        PRAGMA journal_mode = WAL;
-        PRAGMA synchronous = NORMAL;
-        PRAGMA foreign_keys = ON;
-        "#,
-    )?;
+    //
+    // AS-HOTFIX-QW5 (DEC-018-047 ⓖ 生きた事例 #2): 旧版は execute_batch で
+    // 3 PRAGMA を一括実行していたが、`PRAGMA journal_mode = WAL;` は新 mode 名
+    // ("wal") を **結果として返す** ため `execute_batch` が
+    // "Execute returned results - did you mean to call query?" で fail し、
+    // init_database 全経路が Err 返却 → state.db = None →
+    // 「DB 未接続」+「メッセージ保存に失敗しました」連鎖障害になる。
+    //
+    // (旧 in-memory test は PRAGMA を skip して run_migrations 直叩きだったため
+    //  検出できなかった。AS-HOTFIX-QW3 と完全同型 — execute_batch を値返す SQL
+    //  に使う pattern bug の隣接 2 件目。)
+    //
+    // 修正:
+    //   - `journal_mode` は新 mode 名を返すので `query_row` で値を読む。
+    //     `pragma_update` は内部で `execute` を使うため同じエラーになる。
+    //     `pragma_update_and_check` が公式 API だが、最終 mode 名 ("wal") の
+    //     verify を兼ねて `query_row` で受け取り、期待通りでなければ panic
+    //     せず Err 返却（Windows + 一部 FS では WAL fallback も起こり得る）。
+    //   - `synchronous` / `foreign_keys` は値を返さないので `execute` で十分。
+    let journal_mode: String = conn
+        .query_row("PRAGMA journal_mode = WAL;", [], |row| row.get(0))
+        .context("PRAGMA journal_mode = WAL failed")?;
+    if !journal_mode.eq_ignore_ascii_case("wal") {
+        tracing::warn!(
+            actual = %journal_mode,
+            "WAL mode requested but SQLite returned other mode (FS may not support WAL)"
+        );
+    }
+    conn.execute("PRAGMA synchronous = NORMAL;", [])
+        .context("PRAGMA synchronous = NORMAL failed")?;
+    conn.execute("PRAGMA foreign_keys = ON;", [])
+        .context("PRAGMA foreign_keys = ON failed")?;
 
     run_migrations(&conn).context("migration failed")?;
 
@@ -158,6 +211,85 @@ mod tests {
         fts5_supported(&conn).expect(
             "rusqlite must be built with FTS5 support; see Cargo.toml `features = [\"bundled-full\"]`",
         );
+    }
+
+    /// AS-HOTFIX-QW5 (DEC-018-047 ⓖ 生きた事例 #2):
+    /// **on-disk** SQLite で `init_database_at` が完走することを担保する。
+    ///
+    /// 旧 `run_migrations_creates_full_schema_in_memory` は in-memory DB のみを
+    /// covers し、PRAGMA journal_mode = WAL の execute_batch / -wal/-shm 生成
+    /// 経路を完全に skip していた。本 test で実機 ~/.asagi/history.db と同じ
+    /// 経路を検証する。
+    fn unique_temp_db_path(label: &str) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        p.push(format!("asagi-test-{label}-{nanos}.db"));
+        // 既存があれば消去 (前回 test のリーク対策)
+        let _ = std::fs::remove_file(&p);
+        for ext in ["-wal", "-shm"] {
+            let mut sidecar = p.clone();
+            sidecar.set_extension(format!("db{ext}"));
+            let _ = std::fs::remove_file(&sidecar);
+        }
+        p
+    }
+
+    fn cleanup_temp_db(path: &std::path::Path) {
+        let _ = std::fs::remove_file(path);
+        for ext in ["-wal", "-shm"] {
+            let mut sidecar = path.to_path_buf();
+            sidecar.set_extension(format!("db{ext}"));
+            let _ = std::fs::remove_file(&sidecar);
+        }
+    }
+
+    #[test]
+    fn init_database_at_fresh_path_succeeds() {
+        let path = unique_temp_db_path("fresh");
+        let result = init_database_at(&path);
+        cleanup_temp_db(&path);
+        result.expect("init_database_at must succeed on fresh path");
+    }
+
+    /// AS-HOTFIX-QW5 真因再現テスト:
+    /// **空 4096-byte SQLite (schema 0, unknown encoding)** が事前に存在する状態で
+    /// `init_database_at` が成功すること = 旧失敗 init_database が残した
+    /// `~/.asagi/history.db` 残骸からの自動復旧を担保する。
+    ///
+    /// オーナー smoke で観測された stale DB 状態 (`file` コマンド出力:
+    /// `SQLite 3.x database, ... database pages 1, cookie 0, schema 0, unknown 0 encoding`)
+    /// を `Connection::open` + 即 close で再現し、その上で init_database_at を
+    /// 走らせて全経路通過を確認する。
+    #[test]
+    fn init_database_at_stale_empty_db_recovers() {
+        let path = unique_temp_db_path("stale");
+        // 空 SQLite を作成 (Connection::open は 0-byte の場合 file 作成のみ)
+        // 4096-byte page header だけ入った状態にするため、execute_batch で何もしない
+        // ステートメントを 1 つ流す。
+        {
+            let conn = Connection::open(&path).expect("open empty sqlite");
+            // 何の table も作らずに close → 4096-byte schema 0 状態になる
+            // (PRAGMA を一度叩くと page header が確定する)
+            conn.execute_batch("PRAGMA user_version = 0;").ok();
+        }
+        // 再オープン + init_database_at が正常完走すること
+        let result = init_database_at(&path);
+        cleanup_temp_db(&path);
+        result.expect("init_database_at must recover from stale empty DB");
+    }
+
+    /// 二重 init (idempotency) も担保 — アプリ再起動時の経路。
+    #[test]
+    fn init_database_at_double_init_is_idempotent() {
+        let path = unique_temp_db_path("doubleinit");
+        let r1 = init_database_at(&path);
+        let r2 = init_database_at(&path);
+        cleanup_temp_db(&path);
+        r1.expect("first init must succeed");
+        r2.expect("second init must succeed (idempotent)");
     }
 
     /// in-memory DB 上で migration が完走することを担保する

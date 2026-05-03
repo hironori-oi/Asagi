@@ -241,20 +241,15 @@ pub async fn agent_send_message(
 
     // turn/completed まで待ち、delta を結合する
     let mut full = String::new();
-    loop {
-        match tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await {
-            Ok(Ok(n)) => {
-                if n.method == event::ITEM_AGENT_MESSAGE_DELTA {
-                    if let Some(p) = n.params {
-                        if let Some(d) = p.get("delta").and_then(|v| v.as_str()) {
-                            full.push_str(d);
-                        }
-                    }
-                } else if n.method == event::TURN_COMPLETED {
-                    break;
+    while let Ok(Ok(n)) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await {
+        if n.method == event::ITEM_AGENT_MESSAGE_DELTA {
+            if let Some(p) = n.params {
+                if let Some(d) = p.get("delta").and_then(|v| v.as_str()) {
+                    full.push_str(d);
                 }
             }
-            _ => break,
+        } else if n.method == event::TURN_COMPLETED {
+            break;
         }
     }
     if full.is_empty() {
