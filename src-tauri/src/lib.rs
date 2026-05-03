@@ -113,18 +113,27 @@ pub fn run() {
             } else {
                 let multi_for_reaper = state.multi.clone();
                 let app_for_reaper = app.handle().clone();
-                let started = multi_for_reaper.start_idle_reaper(move |pid: &str| {
-                    let event_name =
-                        format!("agent:{pid}:{AGENT_IDLE_SHUTDOWN_EVENT_SUFFIX}");
-                    if let Err(e) = app_for_reaper.emit(&event_name, pid.to_string()) {
-                        tracing::warn!("emit {event_name} failed: {e}");
-                    } else {
-                        tracing::info!("Sidecar {pid} reaped (idle > threshold)");
+                // AS-HOTFIX-QW2 (DEC-018-046 carryover): Tauri 2 setup() は sync context のため、
+                // start_idle_reaper 内部の `tokio::spawn` は runtime を見つけられず panic する。
+                // L141 AuthWatchdog spawn と同じパターンで tauri::async_runtime::spawn に包む。
+                // (cargo `#[tokio::test]` では runtime が常に存在するため検出不可、
+                //  実機 setup() 経路を踏む smoke で初検出 — DEC-018-046 厳守事項 ⓕ 起票)
+                tauri::async_runtime::spawn(async move {
+                    let started = multi_for_reaper.start_idle_reaper(move |pid: &str| {
+                        let event_name =
+                            format!("agent:{pid}:{AGENT_IDLE_SHUTDOWN_EVENT_SUFFIX}");
+                        if let Err(e) = app_for_reaper.emit(&event_name, pid.to_string()) {
+                            tracing::warn!("emit {event_name} failed: {e}");
+                        } else {
+                            tracing::info!("Sidecar {pid} reaped (idle > threshold)");
+                        }
+                    });
+                    if started {
+                        tracing::info!(
+                            "Sidecar idle reaper started (default 30min threshold)"
+                        );
                     }
                 });
-                if started {
-                    tracing::info!("Sidecar idle reaper started (default 30min threshold)");
-                }
             }
 
             // DEC-018-028 QW1: F3 Auth Watchdog 起動。
