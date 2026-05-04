@@ -110,6 +110,15 @@ fn pseudo_rand_u64() -> u64 {
 }
 
 /// retry 試行ごとの状態（Tauri event payload と外部公開 API で共有）。
+///
+/// AS-HOTFIX-QW6 (DEC-018-047 ⑫): `success` フィールドを追加。
+/// `spawn_for_with_retry_factory` が `Ok(created)` を返した直後に
+/// `SpawnAttempt { success: true, last_error: None, next_sleep_ms: None, .. }`
+/// を on_attempt に通知する。frontend の `useSpawnRetry` はこれを受けて
+/// status を `'idle'` に自動 reset し、「再接続中… (1/3)」バッジを消す。
+///
+/// 既存の retry 試行通知 (試行開始 / 失敗 + sleep 通知 / 最終失敗) は全て
+/// `success: false` を送る (後方互換: 旧呼び出し側は無視 OK)。
 #[derive(Debug, Clone)]
 pub struct SpawnAttempt {
     /// 1-based の試行回数（1 = 初回、`max_retries` 到達まで）。
@@ -120,6 +129,10 @@ pub struct SpawnAttempt {
     pub last_error: Option<String>,
     /// 次回試行までの sleep ms。最終試行 / 成功時は None。
     pub next_sleep_ms: Option<u64>,
+    /// AS-HOTFIX-QW6 (DEC-018-047 ⑫): retry loop が成功で終了したか。
+    /// `true` のときは「retrying badge を消してよい」を意味し、frontend が
+    /// status を `'idle'` に reset する。retry 試行中の中間 callback では `false`。
+    pub success: bool,
 }
 
 #[cfg(test)]

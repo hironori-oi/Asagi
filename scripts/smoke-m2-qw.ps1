@@ -16,6 +16,7 @@
 #   - SIDECAR_IDLE_THRESHOLD_MS = 10_000 (本番 30 分 → 10 秒)
 #   - SIDECAR_IDLE_REAPER_INTERVAL_MS = 2_000 (本番 60 秒 → 2 秒)
 #   - MOCK_EXPIRY_IN_SECS = 600 (10 分 = 期限警告閾値 30 分以内 → 即 warning 発火)
+#   - AUTH_POLL_INTERVAL_MS = 2_000 (本番 5 分 → 2 秒, AS-HOTFIX-QW6)
 #   - SIDECAR_MODE = mock (default、Codex CLI 不要)
 #
 # 本番値は contract.rs に定義されており、env 未設定時はそちらが使われる。
@@ -43,6 +44,12 @@ Write-Host '  ASAGI_SIDECAR_IDLE_REAPER_INTERVAL_MS = 2000    (60s -> 2sec)'
 # ===== Smoke C: auth expiry warning — 期限 10 分後 (閾値 30 分以内) =====
 $env:ASAGI_MOCK_EXPIRY_IN_SECS = '600'
 Write-Host '  ASAGI_MOCK_EXPIRY_IN_SECS             = 600     (10min, threshold 30min)'
+
+# ===== AS-HOTFIX-QW6: auth watchdog poll を短縮 =====
+# 本番 5min のまま smoke すると idle reaper kill (10sec) より polling が遅く、
+# 「認証 確認中」が永遠に表示されてしまうため smoke では 2sec に短縮する。
+$env:ASAGI_AUTH_POLL_INTERVAL_MS = '2000'
+Write-Host '  ASAGI_AUTH_POLL_INTERVAL_MS           = 2000    (5min -> 2sec, QW6)'
 
 # ===== mock mode 明示 (default だが念のため) =====
 $env:ASAGI_SIDECAR_MODE = 'mock'

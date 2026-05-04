@@ -11,13 +11,15 @@
  *   if (retry.isFailed) toast.error('Codex 接続に失敗しました。再試行してください');
  *   ```
  *
- * # ライフサイクル
+ * # ライフサイクル (AS-HOTFIX-QW6 で更新)
  *  - mount で event 購読
  *  - max_retries 到達 + last_error あり + next_sleep_ms=null → `'failed'`
  *  - 試行中 (next_sleep_ms !== null OR attempt < max_retries) → `'retrying'`
- *  - 成功時は spawn 完了 → 別経路 (use-codex の status='ready') で表示。
- *    本 hook は spawn-retry event の最終 callback だけ受信する設計のため、
- *    `'idle'` への自動 reset は呼び出し側 (clear()) で行う。
+ *  - **AS-HOTFIX-QW6 (DEC-018-047 ⑫)**: payload.success === true を受け取ったら
+ *    status を即 `'idle'` に reset（「再接続中… (1/3)」バッジを自動消去）。
+ *    旧設計では `clear()` を呼び出し側が手動で叩く必要があったが、Rust 側が
+ *    `spawn_for_with_retry` 成功直後に success=true の event を 1 回送るため
+ *    hook 単体で完結する。
  */
 
 'use client';
@@ -66,6 +68,15 @@ export function useSpawnRetry(projectId: string): UseSpawnRetryResult {
           if (cancelled) return;
           const p = validateSpawnAttemptEvent(e.payload);
           if (!p) return;
+          // AS-HOTFIX-QW6 (DEC-018-047 ⑫): success=true を受け取ったら status を
+          // 即 'idle' に reset し、`last` も null 化する（バッジ即時消失）。
+          // この event は Rust 側 retry loop が `Ok(created)` で抜けた直後に
+          // 1 度だけ送られるため、これ以降の event を待つ必要はない。
+          if (p.success) {
+            setLast(null);
+            setStatus('idle');
+            return;
+          }
           setLast(p);
           // 最終試行 + sleep なし + error あり → failed
           if (

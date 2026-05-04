@@ -42,6 +42,10 @@ use crate::AppState;
 ///
 /// frontend `SpawnAttemptEvent` (`schemas.ts`) と camelCase で 1:1 対応。
 /// `agent:{projectId}:spawn-retry` で emit される。
+///
+/// AS-HOTFIX-QW6 (DEC-018-047 ⑫): `success` を追加。retry loop が成功で終了した
+/// ときに 1 回だけ true で emit され、frontend `useSpawnRetry` はこれを受けて
+/// 「再接続中… (1/3)」バッジを `'idle'` に reset する。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpawnAttemptEventPayload {
@@ -49,6 +53,8 @@ pub struct SpawnAttemptEventPayload {
     pub max_retries: usize,
     pub last_error: Option<String>,
     pub next_sleep_ms: Option<u64>,
+    /// AS-HOTFIX-QW6: 成功通知フラグ。`true` のとき UI 側はバッジを消す。
+    pub success: bool,
 }
 
 impl From<SpawnAttempt> for SpawnAttemptEventPayload {
@@ -58,6 +64,7 @@ impl From<SpawnAttempt> for SpawnAttemptEventPayload {
             max_retries: a.max_retries,
             last_error: a.last_error,
             next_sleep_ms: a.next_sleep_ms,
+            success: a.success,
         }
     }
 }

@@ -272,9 +272,24 @@ impl MultiSidecarManager {
                 max_retries: policy.max_retries,
                 last_error: last_error.clone(),
                 next_sleep_ms: None,
+                success: false,
             });
             match self.spawn_for_with_factory(project_id, factory).await {
-                Ok(created) => return Ok(created),
+                Ok(created) => {
+                    // AS-HOTFIX-QW6 (DEC-018-047 ⑫): 成功通知を 1 回送出する。
+                    // frontend `useSpawnRetry` はこれを受けて 'retrying' status を
+                    // 'idle' に reset する（「再接続中… (1/3)」バッジ消失）。
+                    // attempt=1 で初回成功した時にも送るため、retry 不要なケースでも
+                    // バッジは一瞬出てすぐ消える挙動になる（実害なし、UI で気付けない）。
+                    on_attempt(SpawnAttempt {
+                        attempt,
+                        max_retries: policy.max_retries,
+                        last_error: None,
+                        next_sleep_ms: None,
+                        success: true,
+                    });
+                    return Ok(created);
+                }
                 Err(e) => {
                     if !is_retryable_spawn_error(&e) {
                         // 即 fail（callback で error 通知済）
@@ -288,6 +303,7 @@ impl MultiSidecarManager {
                             max_retries: policy.max_retries,
                             last_error: last_error.clone(),
                             next_sleep_ms: None,
+                            success: false,
                         });
                         bail!(
                             "spawn_for_with_retry exhausted {} attempts: {}",
@@ -303,6 +319,7 @@ impl MultiSidecarManager {
                         max_retries: policy.max_retries,
                         last_error: last_error.clone(),
                         next_sleep_ms: Some(sleep_ms),
+                        success: false,
                     });
                     tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
                 }
@@ -665,6 +682,9 @@ mod tests {
     }
 
     /// AS-201.2 DoD ②-4: AlreadyExists (= 既存 sidecar) は即 Ok(false) 返却（retry なし）。
+    ///
+    /// AS-HOTFIX-QW6 (DEC-018-047 ⑫): 成功 callback が追加されたため、callback 回数は
+    /// 2 回（試行開始 + success 通知）になる。retry は一切発生しないことを確認する。
     #[tokio::test]
     async fn retry_returns_false_for_existing_sidecar_without_retry() {
         let mgr = MultiSidecarManager::new();
@@ -672,18 +692,67 @@ mod tests {
         mgr.spawn_for("p-exist", SidecarMode::Mock).await.unwrap();
 
         let policy = RetryPolicy::for_test();
-        let cb_count = Arc::new(AtomicUsize::new(0));
-        let cb_count_clone = cb_count.clone();
-        let on_attempt = move |_: SpawnAttempt| {
-            cb_count_clone.fetch_add(1, Ordering::SeqCst);
+        let events: Arc<std::sync::Mutex<Vec<SpawnAttempt>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = events.clone();
+        let on_attempt = move |a: SpawnAttempt| {
+            events_clone.lock().unwrap().push(a);
         };
         let result = mgr
             .spawn_for_with_retry("p-exist", SidecarMode::Mock, policy, on_attempt)
             .await
             .unwrap();
         assert!(!result, "existing sidecar must return false (no-op)");
-        // callback は 1 回（試行開始通知）のみ。
-        assert_eq!(cb_count.load(Ordering::SeqCst), 1);
+        // QW6: callback は 2 回（試行開始 + success）
+        let recorded = events.lock().unwrap();
+        assert_eq!(recorded.len(), 2);
+        assert!(!recorded[0].success, "first event must be attempt start");
+        assert!(recorded[1].success, "second event must be success");
+        assert!(recorded[1].last_error.is_none());
+        assert!(recorded[1].next_sleep_ms.is_none());
+    }
+
+    /// AS-HOTFIX-QW6 (DEC-018-047 ⑫): 成功時に success=true の callback が
+    /// 1 回だけ送出されることを確認する（「再接続中… (1/3)」消失の根拠）。
+    #[tokio::test]
+    async fn retry_emits_success_event_after_recovery() {
+        let mgr = MultiSidecarManager::new();
+        let policy = RetryPolicy::for_test(); // base=10, cap=100, max=3
+        let attempts = Arc::new(AtomicUsize::new(0));
+        // 1 回失敗 → 2 回目成功
+        let mut factory = make_failing_factory("p-qw6", 1, attempts.clone());
+
+        let events: Arc<std::sync::Mutex<Vec<SpawnAttempt>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = events.clone();
+        let on_attempt = move |a: SpawnAttempt| {
+            events_clone.lock().unwrap().push(a);
+        };
+
+        let result = mgr
+            .spawn_for_with_retry_factory("p-qw6", policy, on_attempt, &mut factory)
+            .await
+            .unwrap();
+        assert!(result, "must create on second attempt");
+
+        let recorded = events.lock().unwrap();
+        // success=true の event が ちょうど 1 回だけ送出されていること
+        let success_events: Vec<&SpawnAttempt> = recorded.iter().filter(|a| a.success).collect();
+        assert_eq!(
+            success_events.len(),
+            1,
+            "exactly one success event must be emitted: {:?}",
+            recorded
+        );
+        let success = success_events[0];
+        assert_eq!(success.attempt, 2, "success on attempt 2");
+        assert!(success.last_error.is_none());
+        assert!(success.next_sleep_ms.is_none());
+        // success event は callback 列の最後にあること（呼び出し側 hook の順序保証）
+        assert!(
+            recorded.last().unwrap().success,
+            "success event must be last"
+        );
     }
 
     // -----------------------------------------------------------------

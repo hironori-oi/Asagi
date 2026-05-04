@@ -302,12 +302,19 @@ export interface AgentShutdownArgs {
  * Rust 側 `SpawnAttemptEventPayload` (`commands/codex.rs`) と camelCase で 1:1。
  * `attempt` は 1-based、`max_retries` は policy 設定値（既定 3）。
  * 最終試行失敗時は `next_sleep_ms === null` で attempt = max_retries の event が来る。
+ *
+ * AS-HOTFIX-QW6 (DEC-018-047 ⑫): `success` フィールドを追加。retry loop が
+ * 成功で終了したときに `true` で 1 回だけ emit され、`useSpawnRetry` がこれを
+ * 受けて status を `'idle'` に自動 reset する（「再接続中… (1/3)」バッジ消失）。
+ * 旧サーバ (success フィールド未送出) からの payload に対しては `false` で fallback。
  */
 export interface SpawnAttemptEvent {
   attempt: number;
   maxRetries: number;
   lastError: string | null;
   nextSleepMs: number | null;
+  /** QW6: 成功通知。true → UI バッジを消す。 */
+  success: boolean;
 }
 
 export function validateSpawnAttemptEvent(x: unknown): SpawnAttemptEvent | null {
@@ -324,5 +331,7 @@ export function validateSpawnAttemptEvent(x: unknown): SpawnAttemptEvent | null 
           ? null
           : null,
     nextSleepMs: typeof x.nextSleepMs === 'number' ? x.nextSleepMs : null,
+    // QW6: 旧サーバ互換 — success が未指定なら false (= バッジ表示継続)
+    success: typeof x.success === 'boolean' ? x.success : false,
   };
 }

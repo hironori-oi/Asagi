@@ -395,6 +395,23 @@ impl AuthWatchdog {
     }
 
     /// 起動。重複 start は no-op。
+    ///
+    /// # AS-HOTFIX-QW6 (DEC-018-047 ⑫): adaptive tick rate
+    ///
+    /// 旧設計: `interval` (default 5min) ごとに 1 回 `list_active()` を確認 → poll。
+    /// 問題: smoke env で sidecar idle threshold = 10s の場合、
+    ///   1) 起動 → 50ms 後に list_active 確認 → まだ sidecar 未起動 → no-op
+    ///   2) 5min 後の次 tick まで polling 不発
+    ///   3) その間に sidecar が idle reaper で殺される → 永遠に Authenticated 化されない
+    ///
+    /// 結果: UI に「認証 確認中」が無限表示。
+    ///
+    /// 新設計: tick rate を 1s に固定し、各 project の per-pid 直近 poll 時刻を
+    /// 追跡。`now - last_poll[pid] >= interval` なら poll する。新規 spawn された
+    /// sidecar は次 tick (最大 1s 以内) で初回 poll される → state が Unknown→
+    /// Authenticated/RequiresReauth に遷移し、UI から「確認中」が消える。
+    /// 既に polled 済みの project は依然 `interval` (5min) ごとに再 poll される
+    /// ため、production でも RPC 負荷は変わらない。
     pub fn start(&mut self) {
         if self.handle.is_some() {
             return;
@@ -404,16 +421,34 @@ impl AuthWatchdog {
         let states = self.states.clone();
         let emitter = self.emitter.clone();
         let in_flight = self.in_flight.clone();
+        // QW6: tick rate は「最低 100ms、最大 1s、ただし interval が短ければそれ」。
+        // production interval=5min → tick=1s、smoke interval=2s → tick=1s、
+        // 単体テスト interval=100ms → tick=100ms (テスト時間短縮)。
+        let tick =
+            std::cmp::min(interval, Duration::from_millis(1000)).max(Duration::from_millis(100));
         let handle = tokio::spawn(async move {
-            // 起動直後に 1 度即時実行 (initial seed)
-            // 念のため小休止して sidecar spawn の機会を与える
+            // 起動直後に小休止して sidecar spawn の機会を与える (initial seed と同じ意図)
             time::sleep(Duration::from_millis(50)).await;
+            // QW6: per-pid 直近 poll 時刻 (Tokio Instant、wall clock 不要 / monotonic)
+            let mut last_poll: HashMap<String, tokio::time::Instant> = HashMap::new();
             loop {
                 let active: Vec<String> = multi.list_active().await;
-                for pid in active {
-                    Self::poll_one(&multi, &states, &emitter, &in_flight, &pid).await;
+                let now = tokio::time::Instant::now();
+                for pid in &active {
+                    // 初回 poll は即時、以降は interval ごと
+                    let should_poll = match last_poll.get(pid) {
+                        Some(t) => now.duration_since(*t) >= interval,
+                        None => true,
+                    };
+                    if should_poll {
+                        Self::poll_one(&multi, &states, &emitter, &in_flight, pid).await;
+                        last_poll.insert(pid.clone(), now);
+                    }
                 }
-                time::sleep(interval).await;
+                // GC: もう active でない pid は last_poll から除外し
+                // 同 pid 復活時 (再 spawn 時) に即時 poll を保証する
+                last_poll.retain(|k, _| active.contains(k));
+                time::sleep(tick).await;
             }
         });
         self.handle = Some(handle);
@@ -831,6 +866,51 @@ mod tests {
         // tag 同一なので emit されないことを確認 (Authenticated は idempotent)
         assert_eq!(events[0].1.from, "unknown");
         assert_eq!(events[0].1.to, "authenticated");
+    }
+
+    /// AS-HOTFIX-QW6 (DEC-018-047 ⑫): start ループ中に**新規 spawn された** sidecar が
+    /// `interval` を待たずに `tick` (最大 1s) 以内で初回 poll されることを確認する。
+    ///
+    /// 旧設計 (固定 interval sleep): 5min interval なら新規 sidecar は最大 5min 経過後に
+    /// 初めて poll される → smoke env でその間に idle reaper kill されると state が
+    /// 永遠に Unknown のまま → UI に「認証 確認中」が無限表示される。
+    ///
+    /// 本 test は interval=2s に設定し、watchdog start 後に sidecar を spawn → 200ms 内に
+    /// state が Authenticated になることを確認する (tick=min(2s, 1s)=1s なので、
+    /// spawn から最大 1s 程度で poll が走るが、テスト時間短縮のため interval を 200ms に)。
+    #[tokio::test]
+    async fn test_start_loop_picks_up_newly_spawned_sidecar_within_tick() {
+        let _env_guard = lock_env_test_serial();
+        // interval=200ms → tick=min(200ms, 1s).max(100ms)=200ms
+        std::env::set_var(ENV_POLL_INTERVAL_MS, "200");
+        clear_mock_envs();
+
+        let multi = Arc::new(MultiSidecarManager::new());
+        // start 時点では sidecar 未起動 (旧設計だとここで永遠に空 list_active になる)
+        let (cap, emitter) = make_emitter();
+        let mut w = AuthWatchdog::new(multi.clone(), emitter);
+        w.start();
+
+        // start から 50ms (initial seed sleep) 待ってから sidecar spawn
+        time::sleep(Duration::from_millis(80)).await;
+        multi
+            .spawn_for("p-late-spawn", SidecarMode::Mock)
+            .await
+            .unwrap();
+
+        // tick (200ms) ＋余裕で待てば最低 1 回 poll されているはず
+        time::sleep(Duration::from_millis(400)).await;
+        w.stop();
+
+        let events = cap.events.lock().unwrap();
+        assert!(
+            !events.is_empty(),
+            "QW6: late-spawned sidecar must be polled within tick window"
+        );
+        let first = &events[0];
+        assert_eq!(first.0, "p-late-spawn");
+        assert_eq!(first.1.from, "unknown");
+        assert_eq!(first.1.to, "authenticated");
     }
 
     /// DEC-018-045 厳守事項 ⑥ (R-QW-1 緩和策): `force_check` 並行呼び出し時に
