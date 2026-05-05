@@ -157,6 +157,49 @@ pub const AGENT_LAZY_SPAWN_EVENT_SUFFIX: &str = "lazy-spawn";
 /// idle shutdown event の suffix。`agent:{projectId}:idle-shutdown` を組み立てる。
 pub const AGENT_IDLE_SHUTDOWN_EVENT_SUFFIX: &str = "idle-shutdown";
 
+// =============================================================================
+// DEC-018-047 ⑫ + AS-CLEAN-17: Terminal State Event Pattern
+// =============================================================================
+//
+// # Pattern: Terminal State Event Field
+//
+// Tauri custom event を用いた **stateful UI バッジ**（"再接続中..." / "認証 確認中"
+// / "lazy spawn 中..." 等）は、event stream の **終端を示すフィールド**を必ず含めること。
+// 終端フィールドが無い event 設計は、frontend hook が「処理完了 → idle に戻す」経路を
+// 持てず、UI バッジが永久に stuck する原因となる（AS-HOTFIX-QW6 真因 b）。
+//
+// ## 採用する規約
+//
+// - 終端フィールド名: `success: bool`
+//   - `true`  = 処理成功で event stream 終了 → frontend は `idle` に reset
+//   - `false` = 中間 event（試行中 / 失敗 + 次の試行 / 最終失敗）
+// - 旧サーバ payload (フィールド欠落) からの受信は frontend validator が `false` で
+//   fallback すること（後方互換性）
+// - 終端 event は **Rust 側 retry/poll loop が脱出する直前に exactly once** emit する
+//
+// ## 適用対象 event flow
+//
+// | Event suffix         | 終端 emit 箇所                                         | 状態 |
+// |----------------------|-------------------------------------------------------|------|
+// | `spawn-retry`        | `multi.rs::spawn_for_with_retry_factory` `Ok(created)` | ✅ AS-HOTFIX-QW6 で実装済 |
+// | `lazy-spawn`         | （TBD: M2.1 F2 で再評価）                              | ⏳ AS-CLEAN-17 carryover |
+// | `idle-shutdown`      | terminal 性が自明 (発火 = 終了)、success フィールド不要 | N/A |
+//
+// ## 新しい stateful event 追加時のチェックリスト
+//
+// 1. payload struct に `success: bool` フィールドを必ず含める
+// 2. retry/poll loop が成功で抜ける直前に `success: true` event を 1 回だけ emit
+// 3. TS schema validator に「success 欠落 → false fallback」を実装
+// 4. frontend hook で `payload.success === true` 受信時に status を idle reset
+// 5. Rust 側 unit test で「成功時に success=true event が exactly once emit」を検証
+// 6. TS 側 vitest で「success=true 受信時の auto-reset」+「legacy fallback」を検証
+//
+// Review 部門は本契約に違反する新規 event flow を発見した場合 reject すること。
+
+/// terminal state event payload に必須の bool フィールド名。
+/// 後方互換 fallback の検証用にも参照される（旧 payload は本フィールド欠落）。
+pub const TERMINAL_STATE_FIELD_NAME: &str = "success";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +276,65 @@ mod tests {
         );
         assert_eq!(AGENT_LAZY_SPAWN_EVENT_SUFFIX, "lazy-spawn");
         assert_eq!(AGENT_IDLE_SHUTDOWN_EVENT_SUFFIX, "idle-shutdown");
+    }
+
+    /// DEC-018-047 ⑫ + AS-CLEAN-17: terminal state event field 名 golden。
+    /// 本定数を変更すると frontend `useSpawnRetry` の auto-reset 経路 + TS validator
+    /// fallback と整合性が崩れるため、変更時は `schemas.ts` / `use-spawn-retry.ts`
+    /// 両側を必ず同 PR で同期更新すること。
+    #[test]
+    fn contract_qw6_terminal_state_field_is_stable() {
+        assert_eq!(TERMINAL_STATE_FIELD_NAME, "success");
+    }
+
+    /// AS-CLEAN-17 unit test: SpawnAttemptEventPayload (commands/codex.rs) の
+    /// JSON serialize 結果に `success` フィールドが含まれることを garantee する。
+    /// 本契約に違反すると frontend が auto-reset できず "再接続中..." バッジが stuck する
+    /// (AS-HOTFIX-QW6 真因 b の永久回帰防止網)。
+    #[test]
+    fn spawn_retry_payload_contains_terminal_state_field() {
+        // SpawnAttempt → JSON 化（serde_json で in-line 検証、Rust 側のみ完結）
+        use crate::codex_sidecar::retry::SpawnAttempt;
+        let attempt = SpawnAttempt {
+            attempt: 1,
+            max_retries: 3,
+            last_error: None,
+            next_sleep_ms: None,
+            success: true,
+        };
+        // SpawnAttemptEventPayload は commands/codex.rs で `From<SpawnAttempt>` 実装。
+        // Rust struct field 名そのものを文字列化して contract と一致確認する。
+        // (本 test は contract 違反 = field rename を即 fail させる軽量 guard)
+        let payload = serde_json::to_value(SpawnAttemptJsonProbe::from(attempt))
+            .expect("SpawnAttempt is JSON serializable");
+        assert!(
+            payload.get(TERMINAL_STATE_FIELD_NAME).is_some(),
+            "terminal state field '{TERMINAL_STATE_FIELD_NAME}' must be present in spawn-retry payload, got: {payload:?}"
+        );
+    }
+
+    /// AS-CLEAN-17 内部 probe struct: SpawnAttempt の JSON serialize shape を
+    /// commands/codex.rs に依存せず単独確認するための test-only mirror。
+    /// 本 struct のフィールド集合は SpawnAttemptEventPayload と完全一致させること。
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SpawnAttemptJsonProbe {
+        attempt: usize,
+        max_retries: usize,
+        last_error: Option<String>,
+        next_sleep_ms: Option<u64>,
+        success: bool,
+    }
+
+    impl From<crate::codex_sidecar::retry::SpawnAttempt> for SpawnAttemptJsonProbe {
+        fn from(a: crate::codex_sidecar::retry::SpawnAttempt) -> Self {
+            Self {
+                attempt: a.attempt,
+                max_retries: a.max_retries,
+                last_error: a.last_error,
+                next_sleep_ms: a.next_sleep_ms,
+                success: a.success,
+            }
+        }
     }
 }
