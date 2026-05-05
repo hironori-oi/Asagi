@@ -107,21 +107,23 @@ foreach ($file in $files) {
 }
 
 if ($findings.Count -eq 0) {
-    Write-Host "[lint-execute-batch] OK: 0 findings across $($files.Count) .rs files" -ForegroundColor Green
+    # AS-CLEAN-19: Write-Output to ensure capture by pipeline / subprocess
+    # (e.g. asagi-diagnostic-bundle.ps1 invokes this and captures output via 2>&1 | Out-String)
+    Write-Output "[lint-execute-batch] OK: 0 findings across $($files.Count) .rs files"
     exit 0
 }
 
-Write-Host "[lint-execute-batch] FOUND $($findings.Count) potential issues:" -ForegroundColor Yellow
+Write-Output "[lint-execute-batch] FOUND $($findings.Count) potential issues:"
 foreach ($f in $findings) {
-    Write-Host ("  {0}:{1}" -f $f.File, $f.Line) -ForegroundColor Red
-    Write-Host ("    pattern: {0}" -f $f.Pattern)
-    Write-Host ("    fix    : {0}" -f $f.Reason)
+    Write-Output ("  {0}:{1}" -f $f.File, $f.Line)
+    Write-Output ("    pattern: {0}" -f $f.Pattern)
+    Write-Output ("    fix    : {0}" -f $f.Reason)
 }
 
 if ($Strict) {
-    Write-Host "[lint-execute-batch] -Strict mode: failing build" -ForegroundColor Red
+    Write-Output "[lint-execute-batch] -Strict mode: failing build"
     exit 1
 }
 
-Write-Host "[lint-execute-batch] (warn-only mode, pass -Strict to fail CI)"
+Write-Output "[lint-execute-batch] (warn-only mode, pass -Strict to fail CI)"
 exit 0
