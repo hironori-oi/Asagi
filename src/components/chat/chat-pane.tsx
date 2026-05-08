@@ -12,6 +12,7 @@ import {
 import { AuthBadge } from './auth-badge';
 import { CodexContext, type CodexContextValue } from './codex-context';
 import { useCodex } from '@/lib/codex/use-codex';
+import { createDeferredShutdown } from '@/lib/codex/deferred-shutdown';
 import { useProjectStore } from '@/lib/stores/project';
 import { useSessionStore } from '@/lib/stores/session';
 import { useChatStore } from '@/lib/stores/chat';
@@ -45,7 +46,7 @@ export function ChatPane() {
 
   // 初回 (project 切替含む) で spawn / cleanup で shutdown（deferred）
   //
-  // AS-HOTFIX-QW8 (DEC-018-049 候補): React StrictMode dev mode は
+  // AS-HOTFIX-QW8 (DEC-018-049): React StrictMode dev mode は
   // useEffect を意図的に「mount → cleanup → mount」の順で 2 回走らせる。
   // 以前の実装は cleanup で即 `void codex.shutdown()` を呼んでいたため、
   // StrictMode 下では:
@@ -69,23 +70,19 @@ export function ChatPane() {
   //   - 真の project 切替 A→B: cleanup A 予約 → mount B (pid 違うので cancel
   //     せず) → 200ms 後 shutdown(A) が走る ✓
   //   - 真の unmount: cleanup 予約 → 200ms 後 shutdown ✓
+  //
+  // **Defensive hardening (2026-05-09)**: 上記 deferred-cancellable パターンを
+  // `createDeferredShutdown` helper に抽出し、deferred-shutdown.test.ts で
+  // 12 ケース網羅の単体テスト配備。in-line 実装は脆く、将来の terminal pane
+  // / multi-thread workspace 等でも同パターン再利用が見込まれるため。
   const spawnedRef = useRef<string | null>(null);
-  const pendingShutdownRef = useRef<{
-    pid: string;
-    timer: ReturnType<typeof setTimeout>;
-  } | null>(null);
+  const deferredShutdown = useMemo(() => createDeferredShutdown(200), []);
   useEffect(() => {
     if (!activeId) return;
 
     // AS-HOTFIX-QW8: 同一 activeId で remount されたら直前 cleanup の
     // 予約 shutdown を cancel する（StrictMode dev 専用シナリオ）。
-    if (
-      pendingShutdownRef.current &&
-      pendingShutdownRef.current.pid === activeId
-    ) {
-      clearTimeout(pendingShutdownRef.current.timer);
-      pendingShutdownRef.current = null;
-    }
+    deferredShutdown.cancel(activeId);
 
     if (spawnedRef.current === activeId) return;
     spawnedRef.current = activeId;
@@ -95,15 +92,12 @@ export function ChatPane() {
     const currentId = activeId;
     return () => {
       spawnedRef.current = null;
-      const timer = setTimeout(() => {
+      deferredShutdown.schedule(currentId, () => {
         void codex.shutdown();
-        if (pendingShutdownRef.current?.pid === currentId) {
-          pendingShutdownRef.current = null;
-        }
-      }, 200);
-      pendingShutdownRef.current = { pid: currentId, timer };
+      });
     };
     // codex は安定参照ではないため依存に含めず、明示的に activeId のみ。
+    // deferredShutdown は useMemo([]) 由来で安定参照。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 

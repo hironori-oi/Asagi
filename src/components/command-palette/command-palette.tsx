@@ -2,6 +2,10 @@
 
 import { useCallback, useMemo } from 'react';
 import { Command } from 'cmdk';
+// AS-CLEAN-22: Radix Dialog (cmdk transitive dep) から DialogTitle のみ使用。
+// cmdk 1.0.4 は内部で Radix DialogContent を使うが Title 要素を露出しない。
+// `<DialogTitle>` を sr-only でレンダリングして screen reader 向け a11y を満たす。
+import { DialogTitle } from '@radix-ui/react-dialog';
 import { useTranslations } from 'next-intl';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
@@ -130,6 +134,15 @@ export function CommandPalette() {
         'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95'
       )}
     >
+      {/*
+       * AS-CLEAN-22: Radix Dialog は DialogContent 直下に Dialog.Title 要素が
+       * 存在することを前提に screen reader 用 aria-labelledby を組み立てる。
+       * `label` prop は aria-label fallback だが、Radix 1.x はそれでも
+       * 「DialogContent requires a DialogTitle for the component to be
+       * accessible for screen reader users.」という console.error を吐く。
+       * sr-only クラスで視覚的に隠したまま DialogTitle を提供して解消する。
+       */}
+      <DialogTitle className="sr-only">{t('placeholder')}</DialogTitle>
       <div className="flex items-center gap-2 border-b border-border px-3">
         <Search strokeWidth={1.5} className="h-4 w-4 text-muted-foreground" />
         <Command.Input
