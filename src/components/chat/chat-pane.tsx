@@ -43,16 +43,65 @@ export function ChatPane() {
   const markInterrupted = useChatStore((s) => s.markInterrupted);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
 
-  // 初回 (project 切替含む) で spawn / cleanup で shutdown
+  // 初回 (project 切替含む) で spawn / cleanup で shutdown（deferred）
+  //
+  // AS-HOTFIX-QW8 (DEC-018-049 候補): React StrictMode dev mode は
+  // useEffect を意図的に「mount → cleanup → mount」の順で 2 回走らせる。
+  // 以前の実装は cleanup で即 `void codex.shutdown()` を呼んでいたため、
+  // StrictMode 下では:
+  //   1. mount #1: spawn() → write-lock 保持で ~3s spawning
+  //   2. cleanup #1: shutdown() が write-lock 待ち
+  //   3. mount #2: spawn() が write-lock 待ち
+  //   4. spawn #1 完了 → pump #1 起動 → Ok 返却
+  //   5. shutdown #1 が lock 取得 → map.remove() → Box drop →
+  //      broadcast::Sender drop → pump #1 が RecvError::Closed →
+  //      `notification stream closed for {pid}` ログ (これが「@3s 直後」の正体)
+  //   6. spawn #2 が lock 取得 → 新規 sidecar B 作成 → pump #2 起動
+  // 結果として sidecar A は死に、sidecar B は生きるが、フロントエンドの
+  // status は spawning → ready → idle → spawning → ready と flicker し、
+  // owner smoke では「Codex から回答が返ってこない」が発生していた。
+  //
+  // 修正方針: cleanup 時の shutdown を 200ms 遅延で予約し、200ms 以内に
+  // **同一 activeId で remount** されたら timer を cancel する。これで
+  // StrictMode の transient cycle では shutdown が走らず、project 切替や
+  // 真の unmount では正常に shutdown が走る。
+  //   - StrictMode dev: cleanup → 予約 → 即 mount #2 → cancel ✓
+  //   - 真の project 切替 A→B: cleanup A 予約 → mount B (pid 違うので cancel
+  //     せず) → 200ms 後 shutdown(A) が走る ✓
+  //   - 真の unmount: cleanup 予約 → 200ms 後 shutdown ✓
   const spawnedRef = useRef<string | null>(null);
+  const pendingShutdownRef = useRef<{
+    pid: string;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
   useEffect(() => {
     if (!activeId) return;
+
+    // AS-HOTFIX-QW8: 同一 activeId で remount されたら直前 cleanup の
+    // 予約 shutdown を cancel する（StrictMode dev 専用シナリオ）。
+    if (
+      pendingShutdownRef.current &&
+      pendingShutdownRef.current.pid === activeId
+    ) {
+      clearTimeout(pendingShutdownRef.current.timer);
+      pendingShutdownRef.current = null;
+    }
+
     if (spawnedRef.current === activeId) return;
     spawnedRef.current = activeId;
     void codex.spawn();
+
+    // cleanup 内の closure に「この effect 時の activeId」を捕獲する
+    const currentId = activeId;
     return () => {
-      void codex.shutdown();
       spawnedRef.current = null;
+      const timer = setTimeout(() => {
+        void codex.shutdown();
+        if (pendingShutdownRef.current?.pid === currentId) {
+          pendingShutdownRef.current = null;
+        }
+      }, 200);
+      pendingShutdownRef.current = { pid: currentId, timer };
     };
     // codex は安定参照ではないため依存に含めず、明示的に activeId のみ。
     // eslint-disable-next-line react-hooks/exhaustive-deps
