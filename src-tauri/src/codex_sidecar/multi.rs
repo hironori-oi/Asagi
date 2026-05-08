@@ -84,7 +84,13 @@ impl MultiSidecarManager {
     }
 
     /// idle threshold (秒)。env が設定されていればそちらを優先。
-    fn resolve_idle_threshold() -> Duration {
+    ///
+    /// AS-HOTFIX-QW7 (DEC-018-048 候補): visibility を `pub` に変更。
+    /// lib.rs の起動 log で「実際に使われる resolved 値」を表示するために必要。
+    /// 旧来の hardcoded `"(default 30min threshold)"` は env 上書き時にも常に
+    /// "default" と表示する**虚偽 log** を生んでおり、QW1〜QW6 smoke debug の
+    /// 主要ノイズ源になっていた（PIT-010 拡張対象）。
+    pub fn resolve_idle_threshold() -> Duration {
         std::env::var(ENV_SIDECAR_IDLE_THRESHOLD_MS)
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
@@ -94,7 +100,10 @@ impl MultiSidecarManager {
     }
 
     /// idle reaper の poll 間隔。env 優先。
-    fn resolve_reaper_interval() -> Duration {
+    ///
+    /// AS-HOTFIX-QW7 (DEC-018-048 候補): 上記 `resolve_idle_threshold` と同じ理由で
+    /// `pub` に変更。
+    pub fn resolve_reaper_interval() -> Duration {
         std::env::var(ENV_SIDECAR_IDLE_REAPER_INTERVAL_MS)
             .ok()
             .and_then(|v| v.parse::<u64>().ok())

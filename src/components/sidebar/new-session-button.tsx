@@ -3,64 +3,28 @@
 import { useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { Plus } from 'lucide-react';
-import { toast } from 'sonner';
-import { invoke } from '@/lib/tauri/invoke';
-import { useProjectStore } from '@/lib/stores/project';
-import { useSessionStore } from '@/lib/stores/session';
-import type { SessionRow } from '@/lib/tauri/types';
 import { cn } from '@/lib/utils';
 
 /**
  * 新規セッション作成ボタン（AS-117）。
  *
- * - Sidebar / CommandPalette / Ctrl+N から呼ばれる。
- * - SQLite に INSERT し、`useSessionStore` を更新して active を切替。
- * - Tauri 非接続環境（next dev 単体）ではローカル state のみ更新（フォールバック）。
+ * AS-HOTFIX-QW7 (DEC-018-048 候補): create ロジックを `SessionList` の
+ * `asagi:new-session` listener に統合した（旧来は + ボタンのみ機能し、
+ * Ctrl+N と CommandPalette は silent failure だった）。本コンポーネントは
+ * 同一イベントを発火するだけの薄いラッパに簡略化。3 導線が同一経路を通るため
+ * セッション名の auto-title 形式（M/D HH:MM）も常に揃う。
+ *
+ * - Sidebar の + ボタンから呼ばれる。
+ * - CustomEvent `asagi:new-session` を window に dispatch する。
+ * - 実際の create_session 呼び出し / store 更新 / toast は SessionList 側で実施。
  */
 export function NewSessionButton() {
   const t = useTranslations('sidebar');
-  const tToast = useTranslations('toast');
-  const activeProjectId = useProjectStore((s) => s.activeProjectId);
-  const sessions = useSessionStore((s) => s.sessions);
-  const setSessions = useSessionStore((s) => s.setSessions);
-  const setActive = useSessionStore((s) => s.setActive);
 
-  const create = useCallback(async () => {
-    const now = new Date();
-    const title = `${now.getMonth() + 1}/${now.getDate()} ${now
-      .getHours()
-      .toString()
-      .padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-    try {
-      const id = await invoke<string>('create_session', {
-        args: { title, projectId: activeProjectId },
-      });
-      const row: SessionRow = {
-        id,
-        title,
-        project_id: activeProjectId,
-        created_at: now.toISOString(),
-        updated_at: now.toISOString(),
-      };
-      setSessions([row, ...sessions]);
-      setActive(id);
-      toast.success(tToast('newSessionCreated'));
-    } catch {
-      // Fallback: Tauri 非接続環境（next dev only）でも UI を進められるよう、
-      // ローカル ID で session を生やす。永続化は次回 Tauri 起動時にされない点に注意。
-      const id = `local-${Date.now()}`;
-      const row: SessionRow = {
-        id,
-        title,
-        project_id: activeProjectId,
-        created_at: now.toISOString(),
-        updated_at: now.toISOString(),
-      };
-      setSessions([row, ...sessions]);
-      setActive(id);
-      toast.success(tToast('newSessionCreated'));
-    }
-  }, [activeProjectId, sessions, setSessions, setActive, tToast]);
+  const create = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('asagi:new-session'));
+  }, []);
 
   return (
     <button

@@ -126,7 +126,17 @@ pub fn run() {
                         }
                     });
                     if started {
-                        tracing::info!("Sidecar idle reaper started (default 30min threshold)");
+                        // AS-HOTFIX-QW7 (DEC-018-048 候補): 旧 log は常に "default 30min threshold"
+                        // と表示する虚偽 log で、smoke env で env 上書き時も "default" と表示し
+                        // QW1〜QW6 debug 中に「env が読まれていない」という false alarm を生んだ。
+                        // 修正: MultiSidecarManager の resolve_* を pub 化し、resolved 値を表示する。
+                        let threshold_ms =
+                            MultiSidecarManager::resolve_idle_threshold().as_millis();
+                        let interval_ms =
+                            MultiSidecarManager::resolve_reaper_interval().as_millis();
+                        tracing::info!(
+                            "Sidecar idle reaper started (threshold={threshold_ms}ms, interval={interval_ms}ms)"
+                        );
                     }
                 });
             }
@@ -144,10 +154,14 @@ pub fn run() {
                 let watchdog_slot = state.auth_watchdog.clone();
                 tauri::async_runtime::spawn(async move {
                     let mut w = AuthWatchdog::with_tauri(multi, app_handle);
+                    let poll_ms = w.poll_interval().as_millis();
                     w.start();
                     let mut guard = watchdog_slot.write().await;
                     *guard = Some(w);
-                    tracing::info!("AuthWatchdog started (default 5min polling)");
+                    // AS-HOTFIX-QW7 (DEC-018-048 候補): 旧 log は常に "default 5min polling"
+                    // と表示する虚偽 log。AuthWatchdog::poll_interval() で resolved 値を取得し
+                    // smoke env (2sec) でも本番 (5min=300000ms) でも実値を表示する。
+                    tracing::info!("AuthWatchdog started (poll_interval={poll_ms}ms)");
                 });
             }
             Ok(())

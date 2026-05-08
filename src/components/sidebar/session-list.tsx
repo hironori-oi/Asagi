@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { toast } from 'sonner';
 import { invoke } from '@/lib/tauri/invoke';
 import { useProjectStore } from '@/lib/stores/project';
 import { useSessionStore } from '@/lib/stores/session';
@@ -21,6 +22,7 @@ import { SessionItem } from './session-item';
  */
 export function SessionList() {
   const t = useTranslations('sidebar');
+  const tToast = useTranslations('toast');
 
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const sessions = useSessionStore((s) => s.sessions);
@@ -50,15 +52,56 @@ export function SessionList() {
   }, [refetch]);
 
   // CommandPalette / Ctrl+N 経由の新規作成シグナル受信。
+  //
+  // AS-HOTFIX-QW7 (DEC-018-048 候補): 旧実装は `refetch` だけ呼んでいたため、
+  // CommandPalette と Ctrl+N から「新規セッション」を実行しても **何も起きない**
+  // バグが残っていた（Owner 5/9 smoke 報告 ①「セッション名の設定が出てこない」の
+  // 真因）。NewSessionButton はインライン create を持つため + ボタン経由のみ動作
+  // していた。ここで listener を「実際に create_session を呼ぶ」実装に揃え、
+  // 3 つの導線（+ ボタン / Ctrl+N / CommandPalette）を 1 経路に統合する。
+  // NewSessionButton 側はイベント発火に切替えるため、ここで二重生成は起きない。
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onNew = () => {
-      // NewSessionButton が直接 store を更新するため、ここでは refetch のみ行う。
-      void refetch();
+      void (async () => {
+        const now = new Date();
+        const title = `${now.getMonth() + 1}/${now.getDate()} ${now
+          .getHours()
+          .toString()
+          .padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+        try {
+          const id = await invoke<string>('create_session', {
+            args: { title, projectId: activeProjectId },
+          });
+          const row: SessionRow = {
+            id,
+            title,
+            project_id: activeProjectId,
+            created_at: now.toISOString(),
+            updated_at: now.toISOString(),
+          };
+          setSessions([row, ...useSessionStore.getState().sessions]);
+          setActiveSession(id);
+          toast.success(tToast('newSessionCreated'));
+        } catch {
+          // Tauri 非接続環境（next dev 単体）では DB 接続無し → fallback
+          const id = `local-${Date.now()}`;
+          const row: SessionRow = {
+            id,
+            title,
+            project_id: activeProjectId,
+            created_at: now.toISOString(),
+            updated_at: now.toISOString(),
+          };
+          setSessions([row, ...useSessionStore.getState().sessions]);
+          setActiveSession(id);
+          toast.success(tToast('newSessionCreated'));
+        }
+      })();
     };
     window.addEventListener('asagi:new-session', onNew);
     return () => window.removeEventListener('asagi:new-session', onNew);
-  }, [refetch]);
+  }, [activeProjectId, setSessions, setActiveSession, tToast]);
 
   // active session が変わるたびに messages を chat store に hydrate
   useEffect(() => {
